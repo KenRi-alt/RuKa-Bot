@@ -3,3 +3,4 @@ asyncio
 requests
 uvloop
 tgcrypto
+python-dotenv
