@@ -1,20 +1,19 @@
 user:
-  name: ishikki
-  github: ishikki-akabane
-
-language: "python"
-python_version: "3.10"
+  name: "ishikki"
+  github: "ishikki-akabane"
 
 runtime:
-  image: "python:3.11-slim
+  image: "python:3.11-slim"
 
 commands:
+  package: ""
   build:
     - "pip install -r requirements.txt"
-  package:
-    - ""
-  start:
-    - "python3 -m RUKA"
+  start: "python api.py"
+
+repository:
+  branch: "main"
+  auto_deploy: true
 
 env:
   - "ENVIRONMENT=production"
