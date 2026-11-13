@@ -1,6 +1,7 @@
-kurigram
-asyncio
-requests
-uvloop
-tgcrypto
-python-dotenv
+pyrogram==2.0.106
+tgcrypto==1.2.5
+Pillow==10.2.0
+asyncpg==0.29.0
+groq==0.4.2
+python-dotenv==1.0.1
+uvloop==0.19.0
