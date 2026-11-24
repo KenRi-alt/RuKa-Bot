@@ -22,11 +22,11 @@ LEVELS = {
 }
 
 LEVEL_MAP = {
-    "OWNER": lambda: CONFIG.OWNER_LIST,
-    "DEV": lambda: CONFIG.DEV_LIST,
-    "SUDO": lambda: CONFIG.SUDO_LIST,
-    "SUPPORT": lambda: CONFIG.SUPPORT_LIST,
-    "WHITE": lambda: CONFIG.WHITE_LIST,
+    "OWNER": lambda: getattr(CONFIG, "OWNER_LIST", []) or [],
+    "DEV": lambda: getattr(CONFIG, "DEV_LIST", []) or [],
+    "SUDO": lambda: getattr(CONFIG, "SUDO_LIST", []) or [],
+    "SUPPORT": lambda: getattr(CONFIG, "SUPPORT_LIST", []) or [],
+    "WHITE": lambda: getattr(CONFIG, "WHITE_LIST", []) or [],
 }
 
 
@@ -64,6 +64,8 @@ def userLevel(required_level: str, msg: bool = False):
     def decorator(func):
         @wraps(func)
         async def wrapper(client, message, *args, **kwargs):
+            if not message.from_user:
+                return
             user_id = message.from_user.id
             user_rank = get_user_level(user_id)
             if user_rank < required_rank:
@@ -77,4 +79,3 @@ def userLevel(required_level: str, msg: bool = False):
             return await func(client, message, *args, **kwargs)
         return wrapper
     return decorator
-
