@@ -1,8 +1,4 @@
-
-
 from functools import wraps
-from .. import CONFIG
-
 
 BLOCK_LIST = [6335690010]
 
@@ -14,6 +10,8 @@ def BlockList(msg: bool = False):
     def decorator(func):
         @wraps(func)
         async def wrapper(client, message, *args, **kwargs):
+            if not message.from_user:
+                return
             user_id = message.from_user.id
             if user_id in BLOCK_LIST:
                 if msg:
