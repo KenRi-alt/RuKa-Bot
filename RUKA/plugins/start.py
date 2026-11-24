@@ -8,15 +8,11 @@ from ..utils.image_gen import generate_4k_welcome
 @chatAction(action="typing")
 async def start_command(client, message):
     user = message.from_user
-    name = user.first_name
-
-    # Download user's profile picture in memory (if they have one)
     pfp_bytes = None
     if user.photo:
         pfp_bytes = await client.download_media(user.photo.big_file_id, in_memory=True)
 
-    # Generate 4K Pillow card
-    img = generate_4k_welcome(name, "RuKa-Bot ✨", pfp_bytes)
+    img = generate_4k_welcome(user.first_name, "RuKa-Bot ✨", pfp_bytes)
 
     buttons = InlineKeyboardMarkup([
         [
@@ -37,3 +33,30 @@ async def start_command(client, message):
         ),
         reply_markup=buttons
     )
+
+
+@Client.on_message(filters.new_chat_members & filters.group)
+async def welcome_new_member(client, message):
+    for user in message.new_chat_members:
+        if user.is_bot:
+            continue
+
+        pfp_bytes = None
+        if user.photo:
+            pfp_bytes = await client.download_media(user.photo.big_file_id, in_memory=True)
+
+        img = generate_4k_welcome(user.first_name, message.chat.title, pfp_bytes)
+
+        buttons = InlineKeyboardMarkup([
+            [InlineKeyboardButton("📜 Group Rules", callback_data="rules_btn")]
+        ])
+
+        await message.reply_photo(
+            photo=img,
+            caption=(
+                f"🌸 **Welcome, {user.mention}!**\n"
+                f"Glad to have you in **{message.chat.title}**.\n"
+                f"Please read the rules and enjoy your stay!"
+            ),
+            reply_markup=buttons
+        )
