@@ -1,25 +1,21 @@
-from .user_level import userLevel
+from .bot_admin import botAdmin
 from .admin import admin
-import sys
-print("UTILS INIT BEFORE botAdmin; loaded:", [m for m in sys.modules if "RUKA" in m], flush=True)
-from .bot_admin import botAdmin
-
-from .bot_admin import botAdmin
 from .private_only import privateOnly
 from .group_only import groupOnly
-from .block_list import BlockList
 from .disable import ignoreDisabled
 from .chat_action import chatAction
 from .logger_chat import loggerChat
+from .block_list import BlockList
+from .user_level import userLevel
 
 __all__ = [
-    "userLevel",
+    "botAdmin",
     "admin",
     "privateOnly",
     "groupOnly",
-    "botAdmin",
     "ignoreDisabled",
-    "BlockList",
     "chatAction",
     "loggerChat",
+    "BlockList",
+    "userLevel",
 ]
