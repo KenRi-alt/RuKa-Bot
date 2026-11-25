@@ -18,5 +18,7 @@ __all__ = list(_MODULES.keys())
 def __getattr__(name: str):
     if name in _MODULES:
         mod = importlib.import_module(_MODULES[name], __name__)
-        return getattr(mod, name)
+        obj = getattr(mod, name)
+        globals()[name] = obj
+        return obj
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
