@@ -1,10 +1,7 @@
 import os
 from dotenv import load_dotenv
 
-
-
 load_dotenv()
-
 
 
 def _to_int(val: str | None) -> int | None:
@@ -12,7 +9,6 @@ def _to_int(val: str | None) -> int | None:
         return int(val) if val is not None else None
     except Exception:
         return None
-
 
 
 def _to_list(val: str | None, cast_int: bool = False) -> list:
@@ -28,7 +24,6 @@ def _to_list(val: str | None, cast_int: bool = False) -> list:
                 continue
         return out
     return items
-
 
 
 class CONFIG_CLASS:
@@ -50,7 +45,6 @@ class CONFIG_CLASS:
     DB_URL = os.environ.get("DB_URL") or os.environ.get("DB_URl")
 
     SERVER_LOG_BOT_TOKEN = os.environ.get("SERVER_LOG_BOT_TOKEN")
-
     MEOW_API_TOKEN = os.environ.get("MEOW_API_TOKEN")
 
     def __init__(self):
@@ -62,5 +56,3 @@ class CONFIG_CLASS:
             raise ValueError("API_HASH is required!")
         if not self.DB_URL:
             raise ValueError("DB_URL is required!")
-
-
