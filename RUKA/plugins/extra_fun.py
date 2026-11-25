@@ -1,30 +1,51 @@
 import random
 import aiohttp
 from io import BytesIO
-from pyrogram import Client, filters
-from ..utils.admin import admin
-from ..utils.group_only import groupOnly
-from ..utils.image_gen import generate_4k_anime_card
+from aiogram import Router, F
+from aiogram.filters import Command
+from aiogram.types import Message, BufferedInputFile
+from RUKA.utils.image_gen import generate_4k_anime_card
 
-TAGGING_CHATS: set[int] = set()
+router = Router()
 
 
 async def _fetch_bytes(url: str) -> BytesIO | None:
-    async with aiohttp.ClientSession() as session:
-        async with session.get(url, timeout=15) as resp:
-            if resp.status == 200:
-                data = BytesIO(await resp.read())
-                data.seek(0)
-                return data
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, timeout=15) as resp:
+                if resp.status == 200:
+                    data = BytesIO(await resp.read())
+                    data.seek(0)
+                    return data
+    except Exception:
+        pass
     return None
 
 
-# 1. /manga <name> — AniList Manga + 4K Pillow Card
-@Client.on_message(filters.command("manga"))
-async def manga_search(client, message):
-    if len(message.command) < 2:
-        return await message.reply_text("Tell me a manga name! Example: `/manga Chainsaw Man`")
-    query = message.text.split(None, 1)[1]
+async def _fetch_json(url: str):
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, timeout=10) as resp:
+                if resp.status == 200:
+                    return await resp.json()
+    except Exception:
+        pass
+    return None
+
+
+def _get_text(message: Message) -> str | None:
+    if message.reply_to_message and message.reply_to_message.text:
+        return message.reply_to_message.text
+    parts = message.text.split(None, 1)
+    return parts[1] if len(parts) > 1 else None
+
+
+# 1. /manga <name> — AniList Manga + HD Card
+@router.message(Command("manga"))
+async def manga_search(message: Message):
+    parts = message.text.split(None, 1)
+    if len(parts) < 2:
+        return await message.answer("Tell me a manga name! Example: `/manga Chainsaw Man`")
     gql = """
     query ($search: String) {
       Media(search: $search, type: MANGA) {
@@ -38,12 +59,12 @@ async def manga_search(client, message):
     }
     """
     async with aiohttp.ClientSession() as session:
-        async with session.post("https://graphql.anilist.co", json={"query": gql, "variables": {"search": query}}) as resp:
+        async with session.post("https://graphql.anilist.co", json={"query": gql, "variables": {"search": parts[1]}}) as resp:
             res = await resp.json()
 
     media = res.get("data", {}).get("Media")
     if not media:
-        return await message.reply_text("❌ Couldn't find that manga on AniList!")
+        return await message.answer("❌ Couldn't find that manga on AniList!")
 
     title = media["title"].get("english") or media["title"].get("romaji")
     score = f"{media.get('averageScore', 'N/A')}%"
@@ -52,18 +73,19 @@ async def manga_search(client, message):
     cover_bytes = await _fetch_bytes(media["coverImage"]["extraLarge"])
 
     img = generate_4k_anime_card(title, score, genres, status, cover_bytes)
-    await message.reply_photo(
-        photo=img,
+    photo = BufferedInputFile(img.getvalue(), filename="manga.jpg")
+    await message.answer_photo(
+        photo=photo,
         caption=f"📖 **{title}**\n⭐ Score: `{score}` | 📚 `{status}`\n🔗 [View on AniList]({media['siteUrl']})"
     )
 
 
 # 2. /animechar <name> — AniList Character Search
-@Client.on_message(filters.command("animechar"))
-async def char_search(client, message):
-    if len(message.command) < 2:
-        return await message.reply_text("Tell me a character name! Example: `/animechar Ruka Sarashina`")
-    query = message.text.split(None, 1)[1]
+@router.message(Command("animechar"))
+async def char_search(message: Message):
+    parts = message.text.split(None, 1)
+    if len(parts) < 2:
+        return await message.answer("Tell me a character name! Example: `/animechar Ruka Sarashina`")
     gql = """
     query ($search: String) {
       Character(search: $search) {
@@ -75,14 +97,14 @@ async def char_search(client, message):
     }
     """
     async with aiohttp.ClientSession() as session:
-        async with session.post("https://graphql.anilist.co", json={"query": gql, "variables": {"search": query}}) as resp:
+        async with session.post("https://graphql.anilist.co", json={"query": gql, "variables": {"search": parts[1]}}) as resp:
             res = await resp.json()
 
     char = res.get("data", {}).get("Character")
     if not char:
-        return await message.reply_text("❌ Couldn't find that character!")
+        return await message.answer("❌ Couldn't find that character!")
 
-    await message.reply_photo(
+    await message.answer_photo(
         photo=char["image"]["large"],
         caption=(
             f"🌸 **{char['name']['full']}** ({char['name'].get('native', '')})\n"
@@ -92,146 +114,181 @@ async def char_search(client, message):
     )
 
 
-# 3. /couple — Random Couple of the Day
-@Client.on_message(filters.command("couple") & filters.group)
-async def couple_cmd(client, message):
-    members = []
-    async for m in client.get_chat_members(message.chat.id, limit=50):
-        if not m.user.is_bot:
-            members.append(m.user)
-    if len(members) < 2:
-        return await message.reply_text("Not enough members to ship!")
-    c1, c2 = random.sample(members, 2)
-    await message.reply_text(
-        f"💘 **Couple of the Day!**\n\n"
-        f"{c1.mention} ❤️ {c2.mention}\n"
-        f"💓 *Ruka approves this ship!*"
-    )
-
-
-# 4–6. Fun Rate Meters (/simprate, /iq, /waifurate)
-@Client.on_message(filters.command("simprate"))
-async def simp_rate(client, message):
+# 3–8: Fun Meters (/simprate, /iq, /waifurate, /luck, /power, /love)
+@router.message(Command("simprate"))
+async def simp_rate(message: Message):
     target = message.reply_to_message.from_user if message.reply_to_message else message.from_user
-    await message.reply_text(f"🥺 {target.mention} is **{random.randint(0, 100)}%** simp!")
+    await message.answer(f"🥺 {target.full_name} is **{random.randint(0, 100)}%** simp!")
 
 
-@Client.on_message(filters.command("iq"))
-async def iq_rate(client, message):
+@router.message(Command("iq"))
+async def iq_rate(message: Message):
     target = message.reply_to_message.from_user if message.reply_to_message else message.from_user
-    await message.reply_text(f"🧠 {target.mention}'s IQ is **{random.randint(40, 200)}**!")
+    await message.answer(f"🧠 {target.full_name}'s IQ is **{random.randint(40, 200)}**!")
 
 
-@Client.on_message(filters.command("waifurate"))
-async def waifu_rate(client, message):
+@router.message(Command("waifurate"))
+async def waifu_rate(message: Message):
     target = message.reply_to_message.from_user if message.reply_to_message else message.from_user
-    await message.reply_text(f"🌸 {target.mention} is **{random.randint(1, 100)}/100** waifu material!")
+    await message.answer(f"🌸 {target.full_name} is **{random.randint(1, 100)}/100** waifu material!")
 
 
-# 7–13. Text Stylers (/mock, /reverse, /spoiler, /vapor, /morse, /tiny, /count)
-@Client.on_message(filters.command("mock"))
-async def mock_text(client, message):
-    text = message.reply_to_message.text if message.reply_to_message else (message.text.split(None, 1)[1] if len(message.command) > 1 else None)
-    if not text:
-        return await message.reply_text("Give me text or reply to a message!")
-    mocked = "".join(c.upper() if i % 2 else c.lower() for i, c in enumerate(text))
-    await message.reply_text(mocked)
+@router.message(Command("luck"))
+async def luck_rate(message: Message):
+    await message.answer(f"🍀 Your luck today is **{random.randint(1, 100)}%**!")
 
 
-@Client.on_message(filters.command("reverse"))
-async def reverse_text(client, message):
-    text = message.reply_to_message.text if message.reply_to_message else (message.text.split(None, 1)[1] if len(message.command) > 1 else None)
-    if not text:
-        return await message.reply_text("Give me text to reverse!")
-    await message.reply_text(text[::-1])
+@router.message(Command("power"))
+async def power_level(message: Message):
+    target = message.reply_to_message.from_user if message.reply_to_message else message.from_user
+    await message.answer(f"⚡ {target.full_name}'s Power Level is **{random.randint(1000, 99999)}**!")
 
 
-@Client.on_message(filters.command("spoiler"))
-async def spoiler_text(client, message):
-    text = message.reply_to_message.text if message.reply_to_message else (message.text.split(None, 1)[1] if len(message.command) > 1 else None)
-    if not text:
-        return await message.reply_text("Give me text to hide as a spoiler!")
-    await message.reply_text(f"||{text}||")
-
-
-@Client.on_message(filters.command("vapor"))
-async def vapor_text(client, message):
-    text = message.reply_to_message.text if message.reply_to_message else (message.text.split(None, 1)[1] if len(message.command) > 1 else None)
-    if not text:
-        return await message.reply_text("Give me text!")
-    await message.reply_text(" ".join(text))
-
-
-@Client.on_message(filters.command("morse"))
-async def morse_text(client, message):
-    MORSE = {"A": ".-", "B": "-...", "C": "-.-.", "D": "-..", "E": ".", "F": "..-.", "G": "--.", "H": "....", "I": "..", "J": ".---", "K": "-.-", "L": ".-..", "M": "--", "N": "-.", "O": "---", "P": ".--.", "Q": "--.-", "R": ".-.", "S": "...", "T": "-", "U": "..-", "V": "...-", "W": ".--", "X": "-..-", "Y": "-.--", "Z": "--..", " ": "/"}
-    text = message.text.split(None, 1)[1] if len(message.command) > 1 else ""
-    if not text:
-        return await message.reply_text("Give me text to convert to Morse!")
-    await message.reply_text(" ".join(MORSE.get(c.upper(), c) for c in text))
-
-
-@Client.on_message(filters.command("count"))
-async def count_text(client, message):
-    text = message.reply_to_message.text if message.reply_to_message else (message.text.split(None, 1)[1] if len(message.command) > 1 else None)
-    if not text:
-        return await message.reply_text("Reply to a message to count its words & characters!")
-    await message.reply_text(f"🔢 **Words:** `{len(text.split())}` | **Characters:** `{len(text)}`")
-
-
-# 14–17. Group Utilities (/poll, /choose, /decide, /hugall)
-@Client.on_message(filters.command("poll") & filters.group)
-async def create_poll(client, message):
-    if len(message.command) < 2 or "|" not in message.text:
-        return await message.reply_text("Usage: `/poll Best girl? | Ruka | Chizuru | Sumi`")
-    parts = [p.strip() for p in message.text.split(None, 1)[1].split("|") if p.strip()]
+@router.message(Command("love"))
+async def love_calc(message: Message):
+    parts = message.text.split(None, 2)
     if len(parts) < 3:
-        return await message.reply_text("Give a question and at least 2 options separated by `|`!")
-    await client.send_poll(message.chat.id, question=parts[0], options=parts[1:11])
+        return await message.answer("Usage: `/love <name1> <name2>`")
+    pct = random.randint(1, 100)
+    await message.answer(f"💘 **{parts[1]}** + **{parts[2]}** = **{pct}%** Love!")
 
 
-@Client.on_message(filters.command("choose"))
-async def choose_cmd(client, message):
-    if len(message.command) < 2 or "|" not in message.text:
-        return await message.reply_text("Usage: `/choose Pizza | Ramen | Sushi`")
-    opts = [p.strip() for p in message.text.split(None, 1)[1].split("|") if p.strip()]
-    await message.reply_text(f"💓 **Ruka chooses:** **{random.choice(opts)}**!")
+# 9–15: Text Stylers (/mock, /reverse, /spoiler, /vapor, /morse, /tiny, /count)
+@router.message(Command("mock"))
+async def mock_text(message: Message):
+    text = _get_text(message)
+    if not text:
+        return await message.answer("Give me text or reply to a message!")
+    await message.answer("".join(c.upper() if i % 2 else c.lower() for i, c in enumerate(text)))
 
 
-@Client.on_message(filters.command("decide"))
-async def decide_cmd(client, message):
-    await message.reply_text(f"🤔 **Ruka's decision:** **{random.choice(['Yes! 💓', 'No! 💢', 'Maybe~ 🌸'])}**")
+@router.message(Command("reverse"))
+async def reverse_text(message: Message):
+    text = _get_text(message)
+    if not text:
+        return await message.answer("Give me text to reverse!")
+    await message.answer(text[::-1])
 
 
-@Client.on_message(filters.command("hugall") & filters.group)
-async def hug_all(client, message):
-    await message.reply_text("🤗 *Ruka gives everyone in the group a giant warm hug!* 💓")
+@router.message(Command("spoiler"))
+async def spoiler_text(message: Message):
+    text = _get_text(message)
+    if not text:
+        return await message.answer("Give me text to hide as a spoiler!")
+    await message.answer(f"||{text}||")
 
 
-# 18–19. /tagall & /stoptag (Admin Only)
-@Client.on_message(filters.command("tagall") & filters.group)
-@groupOnly()
-@admin(msg=True)
-async def tag_all(client, message):
-    TAGGING_CHATS.add(message.chat.id)
-    reason = message.text.split(None, 1)[1] if len(message.command) > 1 else "Attention everyone! 💓"
-    mentions = []
-    async for m in client.get_chat_members(message.chat.id):
-        if message.chat.id not in TAGGING_CHATS:
-            break
-        if not m.user.is_bot:
-            mentions.append(m.user.mention)
-            if len(mentions) == 5:
-                await message.reply_text(f"{reason}\n\n" + " ".join(mentions))
-                mentions.clear()
-    if mentions and message.chat.id in TAGGING_CHATS:
-        await message.reply_text(f"{reason}\n\n" + " ".join(mentions))
-    TAGGING_CHATS.discard(message.chat.id)
+@router.message(Command("vapor"))
+async def vapor_text(message: Message):
+    text = _get_text(message)
+    if not text:
+        return await message.answer("Give me text!")
+    await message.answer(" ".join(text))
 
 
-@Client.on_message(filters.command("stoptag") & filters.group)
-@groupOnly()
-@admin(msg=True)
-async def stop_tag(client, message):
-    TAGGING_CHATS.discard(message.chat.id)
-    await message.reply_text("🛑 Stopped tagging!")
+@router.message(Command("morse"))
+async def morse_text(message: Message):
+    MORSE = {"A": ".-", "B": "-...", "C": "-.-.", "D": "-..", "E": ".", "F": "..-.", "G": "--.", "H": "....", "I": "..", "J": ".---", "K": "-.-", "L": ".-..", "M": "--", "N": "-.", "O": "---", "P": ".--.", "Q": "--.-", "R": ".-.", "S": "...", "T": "-", "U": "..-", "V": "...-", "W": ".--", "X": "-..-", "Y": "-.--", "Z": "--..", " ": "/"}
+    text = _get_text(message)
+    if not text:
+        return await message.answer("Give me text to convert to Morse!")
+    await message.answer(" ".join(MORSE.get(c.upper(), c) for c in text))
+
+
+@router.message(Command("tiny"))
+async def tiny_text(message: Message):
+    text = _get_text(message)
+    if not text:
+        return await message.answer("Give me text!")
+    normal = "abcdefghijklmnopqrstuvwxyz"
+    small = "ᴀʙᴄᴅᴇꜰɢʜɪᴊᴋʟᴍɴᴏᴘqʀꜱᴛᴜᴠᴡxʏᴢ"
+    trans = str.maketrans(normal, small)
+    await message.answer(text.lower().translate(trans))
+
+
+@router.message(Command("count"))
+async def count_text(message: Message):
+    text = _get_text(message)
+    if not text:
+        return await message.answer("Reply to a message to count its words & characters!")
+    await message.answer(f"🔢 **Words:** `{len(text.split())}` | **Characters:** `{len(text)}`")
+
+
+# 16–21: Group & Decision Utilities (/poll, /choose, /decide, /hugall, /toss, /insult)
+@router.message(Command("poll"), F.chat.type.in_({"group", "supergroup"}))
+async def create_poll(message: Message):
+    parts = message.text.split(None, 1)
+    if len(parts) < 2 or "|" not in parts[1]:
+        return await message.answer("Usage: `/poll Best girl? | Ruka | Chizuru | Sumi`")
+    opts = [p.strip() for p in parts[1].split("|") if p.strip()]
+    if len(opts) < 3:
+        return await message.answer("Give a question and at least 2 options separated by `|`!")
+    await message.bot.send_poll(message.chat.id, question=opts[0], options=opts[1:11])
+
+
+@router.message(Command("choose"))
+async def choose_cmd(message: Message):
+    parts = message.text.split(None, 1)
+    if len(parts) < 2 or "|" not in parts[1]:
+        return await message.answer("Usage: `/choose Pizza | Ramen | Sushi`")
+    opts = [p.strip() for p in parts[1].split("|") if p.strip()]
+    await message.answer(f"💓 **Ruka chooses:** **{random.choice(opts)}**!")
+
+
+@router.message(Command("decide"))
+async def decide_cmd(message: Message):
+    await message.answer(f"🤔 **Ruka's decision:** **{random.choice(['Yes! 💓', 'No! 💢', 'Maybe~ 🌸'])}**")
+
+
+@router.message(Command("hugall"), F.chat.type.in_({"group", "supergroup"}))
+async def hug_all(message: Message):
+    await message.answer("🤗 *Ruka gives everyone in the group a giant warm hug!* 💓")
+
+
+@router.message(Command("toss"))
+async def toss_cmd(message: Message):
+    await message.answer(f"🪙 **{random.choice(['Heads', 'Tails'])}**!")
+
+
+@router.message(Command("insult"))
+async def insult_cmd(message: Message):
+    insults = [
+        "You're like a cloud—when you disappear, it's a beautiful day!",
+        "I'd agree with you, but then we'd both be wrong~",
+        "Even a NPC has better dialogue than you, baka!",
+    ]
+    await message.answer(f"🔥 {random.choice(insults)}")
+
+
+# 22–25: Live APIs (/fact, /joke, /cat, /dog)
+@router.message(Command("fact"))
+async def fact_cmd(message: Message):
+    data = await _fetch_json("https://uselessfacts.jsph.pl/api/v2/facts/random")
+    await message.answer(f"💡 **Fun Fact:**\n{data['text']}" if data and "text" in data else "❌ Couldn't fetch a fact!")
+
+
+@router.message(Command("joke"))
+async def joke_cmd(message: Message):
+    data = await _fetch_json("https://official-joke-api.appspot.com/random_joke")
+    if data and "setup" in data:
+        await message.answer(f"😂 {data['setup']}\n\n||{data['punchline']}||")
+    else:
+        await message.answer("❌ Couldn't fetch a joke!")
+
+
+@router.message(Command("cat"))
+async def cat_cmd(message: Message):
+    data = await _fetch_json("https://api.thecatapi.com/v1/images/search")
+    if data and isinstance(data, list):
+        await message.answer_photo(data[0]["url"], caption="🐱 Meow~")
+    else:
+        await message.answer("❌ Couldn't fetch a cat!")
+
+
+@router.message(Command("dog"))
+async def dog_cmd(message: Message):
+    data = await _fetch_json("https://dog.ceo/api/breeds/image/random")
+    if data and "message" in data:
+        await message.answer_photo(data["message"], caption="🐶 Woof~")
+    else:
+        await message.answer("❌ Couldn't fetch a dog!")
