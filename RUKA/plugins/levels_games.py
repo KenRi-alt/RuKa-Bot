@@ -2,12 +2,20 @@ import html
 import time
 import random
 import aiohttp
-from pyrogram import Client, filters
-from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-from ..utils.chat_action import chatAction
-from ..utils.image_gen import generate_4k_profile
+from io import BytesIO
+from aiogram import Router, F
+from aiogram.filters import Command
+from aiogram.types import (
+    Message,
+    CallbackQuery,
+    InlineKeyboardMarkup,
+    InlineKeyboardButton,
+    BufferedInputFile,
+)
+from RUKA.utils.image_gen import generate_4k_profile
 
-# In-memory stores
+router = Router()
+
 USER_XP: dict[tuple[int, int], int] = {}
 USER_COINS: dict[int, int] = {}
 DAILY_CD: dict[int, float] = {}
@@ -43,139 +51,129 @@ def get_rank(xp: int) -> tuple[str, int]:
     return current_rank, min(progress, 100)
 
 
-# --- Auto XP Listener ---
-@Client.on_message(filters.group & filters.text & ~filters.command(["start", "help"]), group=1)
-async def xp_listener(client, message):
-    if not message.from_user or message.from_user.is_bot:
-        return
-    uid = message.from_user.id
-    key = (message.chat.id, uid)
-    old_xp = USER_XP.get(key, 0)
-    new_xp = old_xp + random.randint(5, 12)
-    USER_XP[key] = new_xp
-    USER_COINS[uid] = USER_COINS.get(uid, 100) + random.randint(1, 3)
-
-    old_rank, _ = get_rank(old_xp)
-    new_rank, _ = get_rank(new_xp)
-    if new_rank != old_rank:
-        await message.reply_text(
-            f"🎉 **LEVEL UP!**\n💓 {message.from_user.mention} reached **{new_rank}**! Ruka is so proud of you~"
-        )
-
-
 # --- 1. /rank & /level (4K Pillow Profile Card) ---
-@Client.on_message(filters.command(["rank", "level"]) & filters.group)
-@chatAction("upload_photo")
-async def rank_cmd(client, message):
+@router.message(Command("rank", "level"), F.chat.type.in_({"group", "supergroup"}))
+async def rank_cmd(message: Message):
     target = message.reply_to_message.from_user if message.reply_to_message else message.from_user
     xp = USER_XP.get((message.chat.id, target.id), 0)
     coins = USER_COINS.get(target.id, 100)
     rank_name, progress = get_rank(xp)
 
+    await message.bot.send_chat_action(message.chat.id, "upload_photo")
     pfp_bytes = None
-    if target.photo:
-        pfp_bytes = await client.download_media(target.photo.big_file_id, in_memory=True)
+    try:
+        photos = await message.bot.get_user_profile_photos(target.id, limit=1)
+        if photos.total_count > 0:
+            file = await message.bot.get_file(photos.photos[0][-1].file_id)
+            pfp_bytes = BytesIO()
+            await message.bot.download_file(file.file_path, pfp_bytes)
+            pfp_bytes.seek(0)
+    except Exception:
+        pass
 
     img = generate_4k_profile(target.first_name, target.id, rank=rank_name, xp=progress, pfp_bytes=pfp_bytes)
-    await message.reply_photo(
-        photo=img,
-        caption=f"📊 **{target.mention}'s Stats**\n🏆 Rank: **{rank_name}**\n✨ XP: `{xp}` | 💎 Coins: `{coins}`"
+    photo = BufferedInputFile(img.getvalue(), filename="profile_4k.png")
+    await message.answer_photo(
+        photo=photo,
+        caption=f"📊 **{target.full_name}'s Stats**\n🏆 Rank: **{rank_name}**\n✨ XP: `{xp}` | 💎 Coins: `{coins}`"
     )
 
 
 # --- 2. /leaderboard & /lb ---
-@Client.on_message(filters.command(["leaderboard", "lb"]) & filters.group)
-async def leaderboard_cmd(client, message):
+@router.message(Command("leaderboard", "lb"), F.chat.type.in_({"group", "supergroup"}))
+async def leaderboard_cmd(message: Message):
     chat_scores = [(uid, xp) for (cid, uid), xp in USER_XP.items() if cid == message.chat.id]
     if not chat_scores:
-        return await message.reply_text("Nobody has earned XP yet! Start chatting~")
+        return await message.answer("Nobody has earned XP yet! Start chatting~")
     chat_scores.sort(key=lambda x: x[1], reverse=True)
     text = f"🏆 **{message.chat.title} — Top Members**\n\n"
     for i, (uid, xp) in enumerate(chat_scores[:10], 1):
         rank_name, _ = get_rank(xp)
         text += f"**{i}.** User `{uid}` — `{xp} XP` ({rank_name})\n"
-    await message.reply_text(text)
+    await message.answer(text)
 
 
 # --- 3–7: Economy (/daily, /bal, /give, /rob, /bet) ---
-@Client.on_message(filters.command("daily"))
-async def daily_cmd(client, message):
+@router.message(Command("daily"))
+async def daily_cmd(message: Message):
     uid = message.from_user.id
     now = time.time()
     if now - DAILY_CD.get(uid, 0) < 86400:
         rem = int(86400 - (now - DAILY_CD[uid])) // 3600
-        return await message.reply_text(f"⏳ Already claimed! Come back in `{rem}h`~")
+        return await message.answer(f"⏳ Already claimed! Come back in `{rem}h`~")
     DAILY_CD[uid] = now
     reward = random.randint(150, 350)
     USER_COINS[uid] = USER_COINS.get(uid, 100) + reward
-    await message.reply_text(f"🎁 **Daily Reward!**\nRuka gave you **`{reward}` 💎 Coins**!")
+    await message.answer(f"🎁 **Daily Reward!**\nRuka gave you **`{reward}` 💎 Coins**!")
 
 
-@Client.on_message(filters.command(["bal", "balance"]))
-async def balance_cmd(client, message):
+@router.message(Command("bal", "balance"))
+async def balance_cmd(message: Message):
     target = message.reply_to_message.from_user if message.reply_to_message else message.from_user
     coins = USER_COINS.get(target.id, 100)
-    await message.reply_text(f"💎 {target.mention} has **`{coins}` Ruka Coins**!")
+    await message.answer(f"💎 {target.full_name} has **`{coins}` Ruka Coins**!")
 
 
-@Client.on_message(filters.command("give"))
-async def give_coins(client, message):
-    if not message.reply_to_message or len(message.command) < 2 or not message.command[1].isdigit():
-        return await message.reply_text("Reply to a user with `/give <amount>`!")
-    amt = int(message.command[1])
+@router.message(Command("give"))
+async def give_coins(message: Message):
+    parts = message.text.split()
+    if not message.reply_to_message or len(parts) < 2 or not parts[1].isdigit():
+        return await message.answer("Reply to a user with `/give <amount>`!")
+    amt = int(parts[1])
     uid = message.from_user.id
     tid = message.reply_to_message.from_user.id
     if amt <= 0 or USER_COINS.get(uid, 100) < amt:
-        return await message.reply_text("❌ Not enough 💎 Coins!")
+        return await message.answer("❌ Not enough 💎 Coins!")
     USER_COINS[uid] -= amt
     USER_COINS[tid] = USER_COINS.get(tid, 100) + amt
-    await message.reply_text(f"💸 Sent **`{amt}` 💎** to {message.reply_to_message.from_user.mention}!")
+    await message.answer(f"💸 Sent **`{amt}` 💎** to {message.reply_to_message.from_user.full_name}!")
 
 
-@Client.on_message(filters.command("rob") & filters.group)
-async def rob_cmd(client, message):
+@router.message(Command("rob"), F.chat.type.in_({"group", "supergroup"}))
+async def rob_cmd(message: Message):
     if not message.reply_to_message or message.reply_to_message.from_user.id == message.from_user.id:
-        return await message.reply_text("Reply to someone to rob them! 🥷")
+        return await message.answer("Reply to someone to rob them! 🥷")
     uid = message.from_user.id
     tid = message.reply_to_message.from_user.id
     if time.time() - ROB_CD.get(uid, 0) < 300:
-        return await message.reply_text("⏳ Lay low for 5 minutes before robbing again!")
+        return await message.answer("⏳ Lay low for 5 minutes before robbing again!")
     ROB_CD[uid] = time.time()
     if random.random() < 0.45 and USER_COINS.get(tid, 100) > 20:
         stolen = random.randint(15, min(80, USER_COINS.get(tid, 100)))
         USER_COINS[tid] -= stolen
         USER_COINS[uid] = USER_COINS.get(uid, 100) + stolen
-        await message.reply_text(f"🥷 **Success!** You stole **`{stolen}` 💎** from {message.reply_to_message.from_user.mention}!")
+        await message.answer(f"🥷 **Success!** You stole **`{stolen}` 💎** from {message.reply_to_message.from_user.full_name}!")
     else:
         fine = 25
         USER_COINS[uid] = max(0, USER_COINS.get(uid, 100) - fine)
-        await message.reply_text(f"🚔 **Caught!** Ruka fined you **`{fine}` 💎**!")
+        await message.answer(f"🚔 **Caught!** Ruka fined you **`{fine}` 💎**!")
 
 
-@Client.on_message(filters.command("bet"))
-async def bet_cmd(client, message):
-    if len(message.command) < 2 or not message.command[1].isdigit():
-        return await message.reply_text("Usage: `/bet <amount>`")
-    amt = int(message.command[1])
+@router.message(Command("bet"))
+async def bet_cmd(message: Message):
+    parts = message.text.split()
+    if len(parts) < 2 or not parts[1].isdigit():
+        return await message.answer("Usage: `/bet <amount>`")
+    amt = int(parts[1])
     uid = message.from_user.id
     if amt <= 0 or USER_COINS.get(uid, 100) < amt:
-        return await message.reply_text("❌ Not enough 💎 Coins!")
+        return await message.answer("❌ Not enough 💎 Coins!")
     if random.random() < 0.5:
         USER_COINS[uid] += amt
-        await message.reply_text(f"🎉 **You WON `{amt}` 💎!** Total: `{USER_COINS[uid]}`")
+        await message.answer(f"🎉 **You WON `{amt}` 💎!** Total: `{USER_COINS[uid]}`")
     else:
         USER_COINS[uid] -= amt
-        await message.reply_text(f"😭 **You LOST `{amt}` 💎!** Total: `{USER_COINS[uid]}`")
+        await message.answer(f"😭 **You LOST `{amt}` 💎!** Total: `{USER_COINS[uid]}`")
 
 
 # --- 8. /boss — Group Anime Boss Raid! ---
-@Client.on_message(filters.command("boss") & filters.group)
-async def spawn_boss(client, message):
+@router.message(Command("boss"), F.chat.type.in_({"group", "supergroup"}))
+async def spawn_boss(message: Message):
     cid = message.chat.id
     boss_name = random.choice(["Colossal Titan", "Demon King Muzan", "Madara Uchiha", "Sukuna"])
     ACTIVE_BOSS[cid] = {"name": boss_name, "hp": 500, "max": 500}
-    btn = InlineKeyboardMarkup([[InlineKeyboardButton("⚔️ Attack Boss!", callback_data="boss_atk")]])
-    await message.reply_text(
+    btn = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⚔️ Attack Boss!", callback_data="boss_atk")]])
+    await message.answer(
         f"👹 **A WILD {boss_name.upper()} APPEARED!**\n"
         f"❤️❤️❤️❤️❤️ `500 / 500 HP`\n\nEveryone tap **Attack** to defeat it for **💎 Coins & XP**!",
         reply_markup=btn
@@ -183,19 +181,19 @@ async def spawn_boss(client, message):
 
 
 # --- 9. /rps ---
-@Client.on_message(filters.command("rps"))
-async def rps_cmd(client, message):
-    buttons = InlineKeyboardMarkup([[
-        InlineKeyboardButton("🪨 Rock", callback_data="rps_rock"),
-        InlineKeyboardButton("📄 Paper", callback_data="rps_paper"),
-        InlineKeyboardButton("✂️ Scissors", callback_data="rps_scissors"),
+@router.message(Command("rps"))
+async def rps_cmd(message: Message):
+    buttons = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="🪨 Rock", callback_data="rps_rock"),
+        InlineKeyboardButton(text="📄 Paper", callback_data="rps_paper"),
+        InlineKeyboardButton(text="✂️ Scissors", callback_data="rps_scissors"),
     ]])
-    await message.reply_text("🎮 **Rock, Paper, Scissors!** Pick your move against Ruka~", reply_markup=buttons)
+    await message.answer("🎮 **Rock, Paper, Scissors!** Pick your move against Ruka~", reply_markup=buttons)
 
 
-# --- 10. /trivia (Live Anime Trivia API + Fallback) ---
-@Client.on_message(filters.command("trivia"))
-async def trivia_cmd(client, message):
+# --- 10. /trivia ---
+@router.message(Command("trivia"))
+async def trivia_cmd(message: Message):
     q, opts, correct = None, None, 0
     try:
         async with aiohttp.ClientSession() as session:
@@ -216,54 +214,58 @@ async def trivia_cmd(client, message):
 
     tid = str(random.randint(10000, 99999))
     LIVE_TRIVIA[tid] = (opts, correct)
-    buttons = InlineKeyboardMarkup([[InlineKeyboardButton(opt, callback_data=f"triv_{tid}_{i}")] for i, opt in enumerate(opts)])
-    await message.reply_text(f"🧠 **Ruka's Anime Trivia!**\n\n{q}", reply_markup=buttons)
+    buttons = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=opt, callback_data=f"triv_{tid}_{i}")] for i, opt in enumerate(opts)
+    ])
+    await message.answer(f"🧠 **Ruka's Anime Trivia!**\n\n{q}", reply_markup=buttons)
 
 
 # --- 11–16: /guess, /duel, /slot, /dart, /basket, /bowl ---
-@Client.on_message(filters.command("guess"))
-async def guess_cmd(client, message):
+@router.message(Command("guess"))
+async def guess_cmd(message: Message):
     secret = random.randint(1, 5)
-    buttons = InlineKeyboardMarkup([[InlineKeyboardButton(str(n), callback_data=f"guess_{secret}_{n}") for n in range(1, 6)]])
-    await message.reply_text("🔢 **Guess the Number!** I'm thinking of **1 to 5**~", reply_markup=buttons)
+    buttons = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=str(n), callback_data=f"guess_{secret}_{n}") for n in range(1, 6)]
+    ])
+    await message.answer("🔢 **Guess the Number!** I'm thinking of **1 to 5**~", reply_markup=buttons)
 
 
-@Client.on_message(filters.command("duel") & filters.group)
-async def duel_cmd(client, message):
+@router.message(Command("duel"), F.chat.type.in_({"group", "supergroup"}))
+async def duel_cmd(message: Message):
     if not message.reply_to_message or not message.reply_to_message.from_user:
-        return await message.reply_text("⚔️ Reply to someone to challenge them to an **Anime Duel**!")
+        return await message.answer("⚔️ Reply to someone to challenge them to an **Anime Duel**!")
     p1, p2 = message.from_user, message.reply_to_message.from_user
     if p1.id == p2.id:
-        return await message.reply_text("Eh?! You can't duel yourself, baka!")
+        return await message.answer("Eh?! You can't duel yourself, baka!")
     winner = random.choice([p1, p2])
     USER_COINS[winner.id] = USER_COINS.get(winner.id, 100) + 50
     moves = ["Rasengan", "Kamehameha", "Ruka's Heartbeat Slash", "Domain Expansion", "Detroit Smash"]
-    await message.reply_text(f"⚔️ **ANIME DUEL!**\n{p1.mention} 🆚 {p2.mention}\n\n💥 {winner.mention} used **{random.choice(moves)}** and WON **50 💎**! 🏆")
+    await message.answer(f"⚔️ **ANIME DUEL!**\n{p1.full_name} 🆚 {p2.full_name}\n\n💥 {winner.full_name} used **{random.choice(moves)}** and WON **50 💎**! 🏆")
 
 
-@Client.on_message(filters.command("slot"))
-async def slot_cmd(client, message):
-    await client.send_dice(message.chat.id, emoji="🎰")
+@router.message(Command("slot"))
+async def slot_cmd(message: Message):
+    await message.answer_dice(emoji="🎰")
 
 
-@Client.on_message(filters.command("dart"))
-async def dart_cmd(client, message):
-    await client.send_dice(message.chat.id, emoji="🎯")
+@router.message(Command("dart"))
+async def dart_cmd(message: Message):
+    await message.answer_dice(emoji="🎯")
 
 
-@Client.on_message(filters.command("basket"))
-async def basket_cmd(client, message):
-    await client.send_dice(message.chat.id, emoji="🏀")
+@router.message(Command("basket"))
+async def basket_cmd(message: Message):
+    await message.answer_dice(emoji="🏀")
 
 
-@Client.on_message(filters.command("bowl"))
-async def bowl_cmd(client, message):
-    await client.send_dice(message.chat.id, emoji="🎳")
+@router.message(Command("bowl"))
+async def bowl_cmd(message: Message):
+    await message.answer_dice(emoji="🎳")
 
 
 # --- Callback Handler ---
-@Client.on_callback_query(filters.regex(r"^(rps_|triv_|guess_|boss_atk)"))
-async def game_callbacks(client, query):
+@router.callback_query(F.data.startswith(("rps_", "triv_", "guess_", "boss_atk")))
+async def game_callbacks(query: CallbackQuery):
     data = query.data
 
     if data == "boss_atk":
@@ -282,10 +284,10 @@ async def game_callbacks(client, query):
             USER_COINS[uid] += 150
             return await query.message.edit_text(
                 f"🏆 **{boss['name']} DEFEATED!**\n"
-                f"💥 {query.from_user.mention} landed the final blow (`{dmg} DMG`) and won **150 💎**!"
+                f"💥 {query.from_user.full_name} landed the final blow (`{dmg} DMG`) and won **150 💎**!"
             )
         hearts = "❤️" * max(1, (boss["hp"] * 5) // boss["max"]) + "🖤" * (5 - max(1, (boss["hp"] * 5) // boss["max"]))
-        btn = InlineKeyboardMarkup([[InlineKeyboardButton("⚔️ Attack Boss!", callback_data="boss_atk")]])
+        btn = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⚔️ Attack Boss!", callback_data="boss_atk")]])
         await query.message.edit_text(
             f"👹 **{boss['name']}**\n{hearts} `{boss['hp']} / {boss['max']} HP`\n\n💥 {query.from_user.first_name} dealt `{dmg}` DMG!",
             reply_markup=btn
@@ -320,3 +322,21 @@ async def game_callbacks(client, query):
             await query.message.edit_text(f"🎉 **Spot on!** It was **{secret}**! You're a mind reader~")
         else:
             await query.message.edit_text(f"😅 Nope! I was thinking of **{secret}**, not {pick}!")
+
+
+# --- Auto XP Listener (registered last in this router) ---
+@router.message(F.chat.type.in_({"group", "supergroup"}), F.text)
+async def xp_listener(message: Message):
+    if not message.from_user or message.from_user.is_bot or message.text.startswith("/"):
+        return
+    uid = message.from_user.id
+    key = (message.chat.id, uid)
+    old_xp = USER_XP.get(key, 0)
+    new_xp = old_xp + random.randint(5, 12)
+    USER_XP[key] = new_xp
+    USER_COINS[uid] = USER_COINS.get(uid, 100) + random.randint(1, 3)
+
+    old_rank, _ = get_rank(old_xp)
+    new_rank, _ = get_rank(new_xp)
+    if new_rank != old_rank:
+        await message.answer(f"🎉 **LEVEL UP!**\n💓 {message.from_user.full_name} reached **{new_rank}**! Ruka is so proud of you~")
