@@ -20,6 +20,8 @@ FLOOD_TRACKER: dict[tuple[int, int], list[float]] = {}
 
 
 async def _is_adm(message: Message) -> bool:
+    if message.chat.type not in ("group", "supergroup"):
+        return False
     m = await message.bot.get_chat_member(message.chat.id, message.from_user.id)
     return m.status in ("creator", "administrator")
 
@@ -252,11 +254,13 @@ async def user_info(message: Message):
             pfp_bytes.seek(0)
     except Exception:
         pass
+
     img = generate_4k_profile(target.first_name, target.id, rank="Member", xp=50, pfp_bytes=pfp_bytes)
-    photo = BufferedInputFile(img.getvalue(), filename="info_4k.png")
+    photo = BufferedInputFile(img.getvalue(), filename="info.jpg")
     await message.answer_photo(
         photo=photo,
-        caption=f"👤 **User Info**\n• Name: {target.full_name}\n• ID: `{target.id}`\n• Username: @{target.username or 'None'}"
+        caption=f"👤 User Info\n• Name: {target.full_name}\n• ID: {target.id}\n• Username: @{target.username or 'None'}",
+        parse_mode=None
     )
 
 
