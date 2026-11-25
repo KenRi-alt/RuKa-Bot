@@ -1,7 +1,10 @@
 import time
 from pyrogram import Client, filters
 from pyrogram.types import ChatPermissions
-from ..utils import admin, botAdmin, groupOnly, chatAction
+from ..utils.admin import admin
+from ..utils.bot_admin import botAdmin
+from ..utils.group_only import groupOnly
+from ..utils.chat_action import chatAction
 from ..utils.image_gen import generate_4k_profile
 
 # In-memory stores
