@@ -13,6 +13,7 @@ from RUKA.utils.image_gen import generate_4k_welcome
 router = Router()
 
 RUKA_PIC = "https://ganga--link--ghhzdp9sv8hk.code.run/i/s0s0y8txhk.jpg"
+PHOTO_CACHE: dict[str, str] = {}
 
 
 def get_start_buttons(bot_username: str) -> InlineKeyboardMarkup:
@@ -37,7 +38,7 @@ def get_start_buttons(bot_username: str) -> InlineKeyboardMarkup:
 def get_help_buttons() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton(text="🔨 Admin (32)", callback_data="help_admin"),
+            InlineKeyboardButton(text="🔨 Moderation", callback_data="help_admin"),
             InlineKeyboardButton(text="🛡️ Security & Warns", callback_data="help_locks"),
         ],
         [
@@ -46,7 +47,7 @@ def get_help_buttons() -> InlineKeyboardMarkup:
         ],
         [
             InlineKeyboardButton(text="🤖 AI & Utility", callback_data="help_ai"),
-            InlineKeyboardButton(text="👑 Owner & Sudo", callback_data="help_owner"),
+            InlineKeyboardButton(text="👑 Owner", callback_data="help_owner"),
         ],
         [
             InlineKeyboardButton(text="🏠 Back to Start", callback_data="help_home"),
@@ -54,7 +55,6 @@ def get_help_buttons() -> InlineKeyboardMarkup:
     ])
 
 
-# --- /start Command ---
 @router.message(CommandStart())
 async def start_cmd(message: Message):
     user = message.from_user
@@ -62,35 +62,39 @@ async def start_cmd(message: Message):
         return
 
     me = await message.bot.get_me()
-    await message.answer_photo(
-        photo=RUKA_PIC,
+    photo_to_send = PHOTO_CACHE.get("ruka_main", RUKA_PIC)
+    sent = await message.answer_photo(
+        photo=photo_to_send,
         caption=(
             f"💓 **Kon'nichiwa, {user.full_name}!**\n\n"
-            f"My heart's already racing—I'm **Ruka Sarashina**, your dedicated anime group management bot! 🌸\n\n"
-            f"✨ **What I can do for you:**\n"
-            f"• Protect your group with **32+ Admin & Anti-Spam tools**\n"
-            f"• Greet new members with **4K Anime Welcome Cards**\n"
-            f"• Entertain your chat with **Grok AI, Boss Raids, Gacha & 100+ commands**\n\n"
-            f"Tap **Help & Commands** below to explore everything~"
+            f"I'm **Ruka Sarashina**—and I'm here to keep your group lively, safe, and full of heart! 🌸\n\n"
+            f"✨ **How I can help:**\n"
+            f"• **Smart Moderation** — Keep troublemakers out effortlessly\n"
+            f"• **Warm Welcomes** — Greet every new member in style\n"
+            f"• **Anime, AI & Games** — Keep your community active and entertained\n\n"
+            f"Tap **Help & Commands** below to see everything I can do."
         ),
         reply_markup=get_start_buttons(me.username),
     )
+    if "ruka_main" not in PHOTO_CACHE and sent.photo:
+        PHOTO_CACHE["ruka_main"] = sent.photo[-1].file_id
 
 
-# --- /help Command ---
 @router.message(Command("help"))
 async def help_cmd(message: Message):
-    await message.answer_photo(
-        photo=RUKA_PIC,
+    photo_to_send = PHOTO_CACHE.get("ruka_main", RUKA_PIC)
+    sent = await message.answer_photo(
+        photo=photo_to_send,
         caption=(
-            "📚 **Ruka's Command Grimoire (100+ Commands)**\n\n"
-            "Choose a category below to see detailed commands and how to use them~"
+            "📚 **Ruka's Command Guide**\n\n"
+            "Select a category below for detailed usage instructions and examples."
         ),
         reply_markup=get_help_buttons(),
     )
+    if "ruka_main" not in PHOTO_CACHE and sent.photo:
+        PHOTO_CACHE["ruka_main"] = sent.photo[-1].file_id
 
 
-# --- Auto-Welcome New Group Members (4K Pillow Card) ---
 @router.message(F.new_chat_members)
 async def welcome_new_member(message: Message):
     for user in message.new_chat_members:
@@ -109,7 +113,7 @@ async def welcome_new_member(message: Message):
             pass
 
         img = generate_4k_welcome(user.first_name, message.chat.title or "Group", pfp_bytes)
-        photo_file = BufferedInputFile(img.getvalue(), filename="welcome_4k.png")
+        photo_file = BufferedInputFile(img.getvalue(), filename="welcome.jpg")
 
         buttons = InlineKeyboardMarkup(inline_keyboard=[
             [
@@ -122,13 +126,12 @@ async def welcome_new_member(message: Message):
             photo=photo_file,
             caption=(
                 f"🌸 **Welcome to {message.chat.title}, {user.full_name}!**\n\n"
-                f"Yay, a new friend! Make sure to read the rules, be kind, and have an amazing time with us! 💓"
+                f"We're so happy you're here! Please take a moment to check the group rules and enjoy your stay. 💓"
             ),
             reply_markup=buttons,
         )
 
 
-# --- Callback Handlers ---
 @router.callback_query(F.data.startswith(("help_", "about_ruka", "rules_btn")))
 async def help_callbacks(query: CallbackQuery):
     data = query.data
@@ -138,22 +141,20 @@ async def help_callbacks(query: CallbackQuery):
 
     if data == "about_ruka":
         return await query.answer(
-            "💓 Ruka-Bot v3.0 | aiogram 3 + PostgreSQL + 4K Pillow + Grok AI!",
+            "💓 Ruka Sarashina — Your energetic anime group companion.\n"
+            "👨‍💻 Developer: @Nocis_creed",
             show_alert=True
         )
 
     if data == "rules_btn":
         return await query.answer(
-            "📜 Be respectful, no spam, no NSFW, and listen to the admins!",
+            "📜 Be respectful, avoid spam, and follow the group admins' instructions!",
             show_alert=True
         )
 
     if data == "help_main":
         await query.message.edit_caption(
-            caption=(
-                "📚 **Ruka's Command Grimoire (100+ Commands)**\n\n"
-                "Choose a category below to see detailed commands and how to use them~"
-            ),
+            caption="📚 **Ruka's Command Guide**\n\nSelect a category below for detailed usage instructions and examples.",
             reply_markup=get_help_buttons()
         )
 
@@ -162,8 +163,8 @@ async def help_callbacks(query: CallbackQuery):
         await query.message.edit_caption(
             caption=(
                 f"💓 **Kon'nichiwa!**\n\n"
-                f"I'm **Ruka Sarashina**, your dedicated anime group management bot! 🌸\n"
-                f"Tap **Help & Commands** below to explore everything~"
+                f"I'm **Ruka Sarashina**—and I'm here to keep your group lively, safe, and full of heart! 🌸\n\n"
+                f"Tap **Help & Commands** below to see everything I can do."
             ),
             reply_markup=get_start_buttons(me.username)
         )
@@ -171,16 +172,18 @@ async def help_callbacks(query: CallbackQuery):
     elif data == "help_admin":
         await query.message.edit_caption(
             caption=(
-                "🔨 **Admin Commands (32)**\n"
-                "• `/adminpanel` — Interactive Control Center\n"
-                "• `/ban`, `/unban`, `/tban 1h`, `/dban`, `/sban`\n"
-                "• `/kick`, `/dkick`, `/skick`\n"
-                "• `/mute`, `/unmute`, `/tmute 30m`, `/dmute`, `/smute`\n"
-                "• `/purge`, `/spurge`, `/del`\n"
-                "• `/pin`, `/unpin`, `/unpinall`\n"
-                "• `/promote`, `/fullpromote`, `/demote`, `/settitle`\n"
-                "• `/invitelink`, `/revokeinvite`, `/setgtitle`, `/setgdesc`, `/slowmode`\n"
-                "• `/zombies`, `/admins`"
+                "🔨 **Moderation Commands**\n\n"
+                "• `/adminpanel` — Open the interactive admin menu.\n"
+                "• `/ban` | `/unban` — Reply to a user or pass their ID.\n"
+                "• `/tban <time>` — Temp-ban a user (e.g. `/tban 1h`, `2d`).\n"
+                "• `/dban` | `/sban` — Delete message & ban, or silent ban.\n"
+                "• `/kick` | `/dkick` | `/skick` — Remove a user from the chat.\n"
+                "• `/mute` | `/unmute` | `/tmute <time>` — Restrict messaging.\n"
+                "• `/purge` | `/del` — Reply to a message to bulk-delete or delete.\n"
+                "• `/pin` | `/unpin` | `/unpinall` — Manage pinned messages.\n"
+                "• `/promote` | `/demote` | `/settitle <title>` — Manage admins.\n"
+                "• `/slowmode <sec>` — Set slowmode delay (`0` to disable).\n"
+                "• `/invitelink` | `/admins` — Get invite link or list admins."
             ),
             reply_markup=back_btn
         )
@@ -188,13 +191,15 @@ async def help_callbacks(query: CallbackQuery):
     elif data == "help_locks":
         await query.message.edit_caption(
             caption=(
-                "🛡️ **Security, Warns & Settings**\n"
-                "• `/settings` — Interactive PostgreSQL Settings Panel\n"
-                "• `/warn`, `/unwarn`, `/warns`, `/resetwarns`, `/setwarnlimit 3`\n"
-                "• `/antiflood 5` — Auto-mute spammers\n"
-                "• `/blacklist <word>`, `/unblacklist`, `/blacklists`\n"
-                "• `/lock <type>`, `/unlock <type>`, `/locks`\n"
-                "• `/nightmode on|off`, `/filter`, `/stop`, `/filters`"
+                "🛡️ **Security, Warns & Filters**\n\n"
+                "• `/settings` — Toggle Captcha, Welcome, Anti-Link & Night Mode.\n"
+                "• `/warn` | `/unwarn` | `/warns` | `/resetwarns` — Manage user warnings.\n"
+                "• `/setwarnlimit <num>` — Set max warns before auto-ban.\n"
+                "• `/antiflood <num>` — Auto-mute spammers (`0` to disable).\n"
+                "• `/blacklist <word>` | `/unblacklist <word>` — Block specific words.\n"
+                "• `/lock <type>` | `/unlock <type>` — Lock `links`, `stickers`, `forwards`, `media`, or `all`.\n"
+                "• `/nightmode on|off` — Lock media, stickers & links.\n"
+                "• `/filter <word> <reply>` | `/stop <word>` — Auto-reply to keywords."
             ),
             reply_markup=back_btn
         )
@@ -202,12 +207,15 @@ async def help_callbacks(query: CallbackQuery):
     elif data == "help_games":
         await query.message.edit_caption(
             caption=(
-                "🎮 **Levels, Economy & Games**\n"
-                "• `/rank`, `/level` — 4K Anime Profile Card\n"
-                "• `/leaderboard` (`/lb`) — Top 10 members\n"
-                "• `/boss` — Group Anime Boss Raid!\n"
-                "• `/daily`, `/bal`, `/give`, `/rob`, `/bet`\n"
-                "• `/rps`, `/trivia`, `/guess`, `/duel`, `/slot`, `/dart`"
+                "🎮 **Levels, Economy & Games**\n\n"
+                "• `/rank` (`/level`) — View your profile card, rank & XP.\n"
+                "• `/leaderboard` (`/lb`) — See the top active members.\n"
+                "• `/boss` — Spawn a group Boss Raid to fight together!\n"
+                "• `/daily` | `/bal` — Claim daily coins & check balance.\n"
+                "• `/give <amt>` | `/rob` | `/bet <amt>` — Trade, steal, or bet coins.\n"
+                "• `/rps` | `/trivia` | `/guess` — Interactive button games.\n"
+                "• `/duel` — Reply to a friend to challenge them.\n"
+                "• `/slot` | `/dart` | `/basket` | `/bowl` — Mini-games."
             ),
             reply_markup=back_btn
         )
@@ -215,12 +223,13 @@ async def help_callbacks(query: CallbackQuery):
     elif data == "help_anime":
         await query.message.edit_caption(
             caption=(
-                "🌸 **Anime, AniList & Fun**\n"
-                "• `/anime <name>` — 4K AniList Card + Synopsis\n"
-                "• `/manga <name>`, `/animechar <name>`\n"
-                "• `/topanime`, `/airing <name>`, `/gacha`\n"
-                "• `/couple`, `/ship`, `/poll`, `/choose`, `/tagall`\n"
-                "• `/waifu`, `/neko`, `/hug`, `/pat`, `/slap`, `/kiss` (+20 more!)"
+                "🌸 **Anime, Gacha & Fun**\n\n"
+                "• `/anime <name>` — Search anime with score & synopsis.\n"
+                "• `/topanime` | `/airing <name>` — Trending & episode countdowns.\n"
+                "• `/gacha` — Pull rare Waifu cards!\n"
+                "• `/collection` | `/view <id/name>` — View your pulled cards.\n"
+                "• `/ship` | `/8ball` | `/truth` | `/dare` | `/quote` — Party fun.\n"
+                "• **Reactions:** `/waifu`, `/neko`, `/hug`, `/pat`, `/slap`, `/kiss`, `/cuddle`, `/poke`, `/wink`, `/baka`, `/blush`, `/dance`, `/smile` & more!"
             ),
             reply_markup=back_btn
         )
@@ -228,12 +237,16 @@ async def help_callbacks(query: CallbackQuery):
     elif data == "help_ai":
         await query.message.edit_caption(
             caption=(
-                "🤖 **Ruka AI & Group Utilities**\n"
-                "• `/ruka <msg>` (`/ai`, `/ask`), `/clearai`\n"
-                "• `/roast`, `/compliment`, `/summarize`, `/translate <lang>`, `/animeidea`\n"
-                "• `/connect`, `/disconnect`, `/connection`\n"
-                "• `/setrules`, `/rules`, `/save`, `/get`, `/notes`, `/clear`\n"
-                "• `/info` (4K Card), `/id`, `/ping`, `/afk`"
+                "🤖 **Ruka AI & Utilities**\n\n"
+                "• `/ruka <msg>` (`/ai`, `/ask`) — Chat with Ruka.\n"
+                "• `/imagine <prompt>` — Generate custom anime art.\n"
+                "• `/clearai` — Reset your AI conversation memory.\n"
+                "• `/roast` | `/compliment` — Reply to a user.\n"
+                "• `/summarize` | `/translate <lang>` — Reply to any text.\n"
+                "• `/animeidea` — Get a custom anime plot.\n"
+                "• `/connect <id>` | `/disconnect` — Manage your group from PM.\n"
+                "• `/setrules` | `/rules` | `/save` | `/get` | `/notes`\n"
+                "• `/info` | `/id` | `/ping` | `/afk <reason>`"
             ),
             reply_markup=back_btn
         )
@@ -241,11 +254,12 @@ async def help_callbacks(query: CallbackQuery):
     elif data == "help_owner":
         await query.message.edit_caption(
             caption=(
-                "👑 **Owner, Dev & Sudo Commands (18)**\n"
-                "• `/stats`, `/sudolist`, `/addsudo`, `/rmsudo`\n"
-                "• `/block`, `/unblock`, `/gban`, `/ungban`, `/gmute`, `/ungmute`\n"
-                "• `/broadcast`, `/chatlist`, `/leavechat`, `/send`\n"
-                "• `/eval`, `/sh`, `/logs`, `/restart`, `/backup`"
+                "👑 **Owner & Sudo Commands**\n\n"
+                "• `/stats` | `/sudolist` — System uptime & staff list.\n"
+                "• `/addsudo` | `/rmsudo` — Manage sudo access.\n"
+                "• `/gban` | `/ungban` — Global ban/unban.\n"
+                "• `/send <chat_id> <text>` | `/leavechat <id>`\n"
+                "• `/eval <code>` | `/sh <cmd>` | `/restart` | `/backup`"
             ),
             reply_markup=back_btn
         )
