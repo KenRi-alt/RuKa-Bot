@@ -20,7 +20,6 @@ def _make_4k_bg(bg_bytes: BytesIO = None, fallback_path: str = "resources/welcom
         except FileNotFoundError:
             bg = Image.new("RGBA", (3840, 2160), (16, 18, 32, 255))
 
-    # Darken background slightly so text & glass card pop
     overlay = Image.new("RGBA", (3840, 2160), (10, 12, 24, 130))
     return Image.alpha_composite(bg, overlay)
 
@@ -54,13 +53,13 @@ def _make_circle_pfp(pfp_bytes: BytesIO, size: int = 620, ring_color=(255, 105, 
 
 def _export_4k(img: Image.Image, filename: str) -> BytesIO:
     out = BytesIO()
-    out.name = filename
-    img.convert("RGB").save(out, format="PNG", optimize=True)
+    out.name = filename.replace(".png", ".jpg")
+    img.convert("RGB").save(out, format="JPEG", quality=90, optimize=True)
     out.seek(0)
     return out
 
 
-# 1. 4K Welcome Card (Frosted Glass + Glowing Ruka Pink Ring)
+# 1. 4K Welcome Card
 def generate_4k_welcome(user_name: str, group_name: str, pfp_bytes: BytesIO = None) -> BytesIO:
     bg = _make_4k_bg()
     bg = _draw_glass_card(bg, (320, 220, 3520, 1940), radius=90)
@@ -69,18 +68,14 @@ def generate_4k_welcome(user_name: str, group_name: str, pfp_bytes: BytesIO = No
     bg.paste(pfp_ring, (1920 - pfp_ring.width // 2, 340), pfp_ring)
 
     draw = ImageDraw.Draw(bg)
-    title_font = _load_font(150)
-    sub_font = _load_font(95)
-    tag_font = _load_font(65)
+    draw.text((1920, 1180), f"Welcome, {user_name}!", font=_load_font(150), fill=(255, 255, 255, 255), anchor="mm")
+    draw.text((1920, 1360), f"To {group_name}", font=_load_font(95), fill=(255, 182, 193, 255), anchor="mm")
+    draw.text((1920, 1520), "RUKA-BOT  •  ANIME GROUP MANAGEMENT", font=_load_font(65), fill=(180, 200, 230, 220), anchor="mm")
 
-    draw.text((1920, 1180), f"Welcome, {user_name}!", font=title_font, fill=(255, 255, 255, 255), anchor="mm")
-    draw.text((1920, 1360), f"To {group_name}", font=sub_font, fill=(255, 182, 193, 255), anchor="mm")
-    draw.text((1920, 1520), "RUKA-BOT  •  ANIME GROUP MANAGEMENT", font=tag_font, fill=(180, 200, 230, 220), anchor="mm")
-
-    return _export_4k(bg, "welcome_4k.png")
+    return _export_4k(bg, "welcome_4k.jpg")
 
 
-# 2. 4K Profile / Rank Card (For /info or /rank)
+# 2. 4K Profile / Rank Card
 def generate_4k_profile(user_name: str, user_id: int, rank: str = "Genin", xp: int = 45, pfp_bytes: BytesIO = None) -> BytesIO:
     bg = _make_4k_bg()
     bg = _draw_glass_card(bg, (280, 260, 3560, 1900), radius=90, outline=(100, 200, 255, 150))
@@ -89,23 +84,19 @@ def generate_4k_profile(user_name: str, user_id: int, rank: str = "Genin", xp: i
     bg.paste(pfp_ring, (460, 740), pfp_ring)
 
     draw = ImageDraw.Draw(bg)
-    name_font = _load_font(145)
-    info_font = _load_font(85)
+    draw.text((1320, 620), user_name, font=_load_font(145), fill=(255, 255, 255, 255), anchor="lm")
+    draw.text((1320, 800), f"ID: {user_id}   |   Rank: {rank}", font=_load_font(85), fill=(173, 216, 230, 255), anchor="lm")
 
-    draw.text((1320, 620), user_name, font=name_font, fill=(255, 255, 255, 255), anchor="lm")
-    draw.text((1320, 800), f"ID: {user_id}   |   Rank: {rank}", font=info_font, fill=(173, 216, 230, 255), anchor="lm")
-
-    # XP Progress Bar
     bar_x1, bar_y1, bar_x2, bar_y2 = 1320, 1020, 3300, 1110
     draw.rounded_rectangle((bar_x1, bar_y1, bar_x2, bar_y2), radius=45, fill=(255, 255, 255, 45))
     fill_w = int((bar_x2 - bar_x1) * max(0.05, min(xp / 100, 1.0)))
     draw.rounded_rectangle((bar_x1, bar_y1, bar_x1 + fill_w, bar_y2), radius=45, fill=(255, 105, 180, 255))
     draw.text((1320, 1200), f"XP Progress: {xp}%", font=_load_font(70), fill=(255, 255, 255, 220), anchor="lm")
 
-    return _export_4k(bg, "profile_4k.png")
+    return _export_4k(bg, "profile_4k.jpg")
 
 
-# 3. 4K AniList / Anime Card (For /anime or /manga)
+# 3. 4K AniList / Anime Card
 def generate_4k_anime_card(title: str, score: str, genres: str, status: str, cover_bytes: BytesIO = None) -> BytesIO:
     bg = _make_4k_bg(bg_bytes=cover_bytes)
     bg = _draw_glass_card(bg, (240, 200, 3600, 1960), radius=90, outline=(255, 180, 100, 150))
@@ -121,4 +112,4 @@ def generate_4k_anime_card(title: str, score: str, genres: str, status: str, cov
     draw.text((1460, 920), f"🎭 Genres: {genres[:45]}", font=_load_font(75), fill=(200, 220, 255, 240), anchor="lm")
     draw.text((1460, 1680), "Powered by AniList  •  RuKa-Bot 4K", font=_load_font(65), fill=(255, 182, 193, 220), anchor="lm")
 
-    return _export_4k(bg, "anime_4k.png")
+    return _export_4k(bg, "anime_4k.jpg")
