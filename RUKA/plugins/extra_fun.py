@@ -2,7 +2,8 @@ import random
 import aiohttp
 from io import BytesIO
 from pyrogram import Client, filters
-from ..utils import admin, groupOnly
+from ..utils.admin import admin
+from ..utils.group_only import groupOnly
 from ..utils.image_gen import generate_4k_anime_card
 
 TAGGING_CHATS: set[int] = set()
