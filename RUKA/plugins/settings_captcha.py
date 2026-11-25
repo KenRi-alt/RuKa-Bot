@@ -1,6 +1,8 @@
 from pyrogram import Client, filters
 from pyrogram.types import ChatPermissions, InlineKeyboardMarkup, InlineKeyboardButton
-from ..utils import admin, botAdmin, groupOnly
+from ..utils.admin import admin
+from ..utils.bot_admin import botAdmin
+from ..utils.group_only import groupOnly
 from ..utils.db import get_chat_settings, toggle_setting, add_filter, remove_filter, get_filters
 
 
