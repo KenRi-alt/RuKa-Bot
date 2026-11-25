@@ -1,14 +1,19 @@
 import os
 import asyncio
-from pyrogram import Client, filters
+from aiogram import Router
+from aiogram.filters import Command
+from aiogram.types import Message, FSInputFile
 from RUKA import CONFIG
-from ..utils.user_level import userLevel
+
+router = Router()
 
 
-@Client.on_message(filters.command("backup"))
-@userLevel("OWNER", msg=True)
-async def backup_postgres(client: Client, message):
-    msg = await message.reply_text("⏳ Creating PostgreSQL backup...")
+@router.message(Command("backup"))
+async def backup_postgres(message: Message):
+    if message.from_user.id not in (CONFIG.OWNER_LIST or []):
+        return await message.answer("❌ Owner only!")
+
+    msg = await message.answer("⏳ Creating PostgreSQL backup...")
     backup_file = "ruka_postgres_backup.sql"
 
     proc = await asyncio.create_subprocess_exec(
@@ -21,20 +26,13 @@ async def backup_postgres(client: Client, message):
     if proc.returncode != 0:
         return await msg.edit_text(f"❌ Backup failed:\n`{stderr.decode()}`")
 
+    doc = FSInputFile(backup_file)
     if CONFIG.LOGS_CHANNEL:
-        await client.send_document(
-            CONFIG.LOGS_CHANNEL,
-            document=backup_file,
-            caption="📦 **RuKa-Bot PostgreSQL Backup**"
-        )
+        await message.bot.send_document(CONFIG.LOGS_CHANNEL, document=doc, caption="📦 **RuKa-Bot PostgreSQL Backup**")
 
-    for owner_id in CONFIG.OWNER_LIST:
+    for owner_id in (CONFIG.OWNER_LIST or []):
         try:
-            await client.send_document(
-                owner_id,
-                document=backup_file,
-                caption="📦 **RuKa-Bot PostgreSQL Backup**"
-            )
+            await message.bot.send_document(owner_id, document=doc, caption="📦 **RuKa-Bot PostgreSQL Backup**")
         except Exception:
             pass
 
