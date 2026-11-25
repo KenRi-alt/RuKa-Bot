@@ -3,7 +3,7 @@ import aiohttp
 from io import BytesIO
 from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-from ..utils import chatAction
+from ..utils.chat_action import chatAction
 from ..utils.image_gen import generate_4k_anime_card
 
 ANIME_SYNOPSIS_CACHE: dict[int, str] = {}
