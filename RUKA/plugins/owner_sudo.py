@@ -6,7 +6,7 @@ import traceback
 from io import StringIO
 from pyrogram import Client, filters
 from RUKA import CONFIG, LOGGER
-from ..utils import userLevel
+from ..utils.user_level import userLevel
 from ..utils.block_list import BLOCK_LIST
 
 START_TIME = time.time()
