@@ -1,31 +1,11 @@
-import os
 import asyncio
-from aiohttp import web
 from aiogram import Bot, Dispatcher
 from aiogram.enums import ParseMode
 from aiogram.client.default import DefaultBotProperties
 from RUKA import LOGGER, CONFIG
 
 
-# Render Health Check Server (keeps Free Web Service alive)
-async def health_check(request):
-    return web.Response(text="RuKa-Bot is Online!")
-
-
-async def start_web_server():
-    app = web.Application()
-    app.router.add_get("/", health_check)
-    runner = web.AppRunner(app)
-    await runner.setup()
-    port = int(os.environ.get("PORT", 10000))
-    site = web.TCPSite(runner, "0.0.0.0", port)
-    await site.start()
-    LOGGER.info(f"[SERVER] Health check listener active on port {port}")
-
-
 async def main():
-    await start_web_server()
-
     bot = Bot(
         token=CONFIG.BOT_TOKEN,
         default=DefaultBotProperties(parse_mode=ParseMode.MARKDOWN)
