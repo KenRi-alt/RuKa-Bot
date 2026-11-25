@@ -1,21 +1,22 @@
-from .bot_admin import botAdmin
-from .admin import admin
-from .private_only import privateOnly
-from .group_only import groupOnly
-from .disable import ignoreDisabled
-from .chat_action import chatAction
-from .logger_chat import loggerChat
-from .block_list import BlockList
-from .user_level import userLevel
+import importlib
 
-__all__ = [
-    "botAdmin",
-    "admin",
-    "privateOnly",
-    "groupOnly",
-    "ignoreDisabled",
-    "chatAction",
-    "loggerChat",
-    "BlockList",
-    "userLevel",
-]
+_MODULES = {
+    "userLevel": ".user_level",
+    "admin": ".admin",
+    "botAdmin": ".bot_admin",
+    "privateOnly": ".private_only",
+    "groupOnly": ".group_only",
+    "BlockList": ".block_list",
+    "ignoreDisabled": ".disable",
+    "chatAction": ".chat_action",
+    "loggerChat": ".logger_chat",
+}
+
+__all__ = list(_MODULES.keys())
+
+
+def __getattr__(name: str):
+    if name in _MODULES:
+        mod = importlib.import_module(_MODULES[name], __name__)
+        return getattr(mod, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
