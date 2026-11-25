@@ -2,7 +2,7 @@ import os
 import urllib.parse
 import aiohttp
 from pyrogram import Client, filters
-from ..utils import chatAction
+from ..utils.chat_action import chatAction
 
 GROK_API_KEY = os.getenv("GROK_API_KEY", "")
 GROK_URL = "https://api.x.ai/v1/chat/completions"
