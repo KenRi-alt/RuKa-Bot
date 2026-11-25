@@ -1,45 +1,51 @@
+import os
 import asyncio
-from pyrogram import Client
-from pyrogram.errors import FloodWait
-
+from aiohttp import web
+from aiogram import Bot, Dispatcher
+from aiogram.enums import ParseMode
+from aiogram.client.default import DefaultBotProperties
 from RUKA import LOGGER, CONFIG
 
 
-async def notify_online(client: Client) -> None:
-    LOGGER.info("[RUKA]: BOOTING.......")
-    if not CONFIG.SUPPORT_CHAT_ID:
-        return
-    try:
-        await client.send_message(CONFIG.SUPPORT_CHAT_ID, "Client Host is Online!")
-    except Exception as err:
-        LOGGER.info(f"Bot wasn't able to send message in your log Group\n\nERROR: {err}")
+# Render Health Check Server (keeps Free Web Service alive)
+async def health_check(request):
+    return web.Response(text="RuKa-Bot is Online!")
 
 
-class Bot(Client):
-    def __init__(self) -> None:
-        super().__init__(
-            "rukabot",
-            api_id=CONFIG.API_ID,
-            api_hash=CONFIG.API_HASH,
-            bot_token=CONFIG.BOT_TOKEN,
-            plugins={"root": "RUKA.plugins"},
-        )
+async def start_web_server():
+    app = web.Application()
+    app.router.add_get("/", health_check)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    port = int(os.environ.get("PORT", 10000))
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+    LOGGER.info(f"[SERVER] Health check listener active on port {port}")
 
-    async def start(self, *args, **kwargs):
-        while True:
-            try:
-                await super().start(*args, **kwargs)
-                break
-            except FloodWait as e:
-                LOGGER.warning(f"[RUKA]: FloodWait! Sleeping for {e.value} seconds...")
-                await asyncio.sleep(e.value + 5)
-        LOGGER.info("Bot Online")
-        await notify_online(self)
 
-    async def stop(self, *args, **kwargs):
-        await super().stop(*args, **kwargs)
-        LOGGER.info("Stopped Services")
+async def main():
+    await start_web_server()
+
+    bot = Bot(
+        token=CONFIG.BOT_TOKEN,
+        default=DefaultBotProperties(parse_mode=ParseMode.MARKDOWN)
+    )
+    dp = Dispatcher()
+
+    # Load aiogram routers (we will add these next!)
+    from RUKA.plugins.start import router as start_router
+    dp.include_router(start_router)
+
+    LOGGER.info("Bot Online (aiogram 3 - Zero FloodWait!)")
+    if CONFIG.SUPPORT_CHAT_ID:
+        try:
+            await bot.send_message(CONFIG.SUPPORT_CHAT_ID, "💓 **RuKa-Bot is Online!** (Powered by aiogram 3)")
+        except Exception as err:
+            LOGGER.info(f"Could not notify support chat: {err}")
+
+    await bot.delete_webhook(drop_pending_updates=True)
+    await dp.start_polling(bot)
 
 
 if __name__ == "__main__":
-    Bot().run()
+    asyncio.run(main())
