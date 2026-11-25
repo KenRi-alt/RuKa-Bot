@@ -1,29 +1,31 @@
 import asyncio
 from datetime import datetime, timedelta
-from pyrogram import Client, filters
-from pyrogram.enums import ChatMembersFilter
-from pyrogram.types import (
+from aiogram import Router, F
+from aiogram.filters import Command
+from aiogram.types import (
+    Message,
+    CallbackQuery,
     ChatPermissions,
-    ChatPrivileges,
     InlineKeyboardMarkup,
     InlineKeyboardButton,
 )
-from ..utils.admin import admin
-from ..utils.bot_admin import botAdmin
-from ..utils.group_only import groupOnly
-from ..utils.chat_action import chatAction
+
+router = Router()
 
 
-async def get_target(client, message):
-    if message.reply_to_message and message.reply_to_message.from_user:
-        return message.reply_to_message.from_user
-    if len(message.command) > 1:
-        arg = message.command[1]
-        try:
-            return await client.get_users(int(arg) if arg.isdigit() else arg)
-        except Exception:
-            return None
-    return None
+async def is_admin(message: Message, right: str = None) -> bool:
+    if message.chat.type not in ("group", "supergroup"):
+        return False
+    member = await message.bot.get_chat_member(message.chat.id, message.from_user.id)
+    if member.status == "creator":
+        return True
+    if member.status != "administrator":
+        await message.answer("❌ You must be an admin to use this command!")
+        return False
+    if right and not getattr(member, right, False):
+        await message.answer(f"❌ You are missing the `{right}` permission!")
+        return False
+    return True
 
 
 def parse_time(time_str: str) -> datetime | None:
@@ -39,431 +41,339 @@ def parse_time(time_str: str) -> datetime | None:
     return None
 
 
-# 1. /adminpanel — Interactive Control Center
-@Client.on_message(filters.command("adminpanel") & filters.group)
-@groupOnly()
-@admin(msg=True)
-async def admin_panel(client, message):
-    buttons = InlineKeyboardMarkup([
+def get_target_id(message: Message) -> int | None:
+    if message.reply_to_message and message.reply_to_message.from_user:
+        return message.reply_to_message.from_user.id
+    parts = message.text.split()
+    if len(parts) > 1 and parts[1].lstrip("-").isdigit():
+        return int(parts[1])
+    return None
+
+
+# 1. /adminpanel
+@router.message(Command("adminpanel"), F.chat.type.in_({"group", "supergroup"}))
+async def admin_panel(message: Message):
+    if not await is_admin(message):
+        return
+    buttons = InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton("🔨 Ban/Mute Guide", callback_data="adm_guide"),
-            InlineKeyboardButton("🧹 Clean Zombies", callback_data="adm_zombies"),
+            InlineKeyboardButton(text="🔨 Ban/Mute Guide", callback_data="adm_guide"),
+            InlineKeyboardButton(text="🔗 Invite Link", callback_data="adm_invite"),
         ],
         [
-            InlineKeyboardButton("🔗 Invite Link", callback_data="adm_invite"),
-            InlineKeyboardButton("📌 Unpin All", callback_data="adm_unpinall"),
-        ],
-        [InlineKeyboardButton("❌ Close Menu", callback_data="adm_close")]
+            InlineKeyboardButton(text="📌 Unpin All", callback_data="adm_unpinall"),
+            InlineKeyboardButton(text="❌ Close", callback_data="adm_close"),
+        ]
     ])
-    await message.reply_text(
-        "💓 **Ruka's Admin Control Panel (32 Commands)**\n\n"
+    await message.answer(
+        "💓 **Ruka's Admin Control Panel**\n\n"
         "Hmph! I'm keeping a close eye on this group for you~\nChoose an action below:",
         reply_markup=buttons
     )
 
 
 # 2–6: /ban, /unban, /tban, /dban, /sban
-@Client.on_message(filters.command("ban") & filters.group)
-@groupOnly()
-@admin(rights=["can_restrict_members"], msg=True)
-@botAdmin(rights=["can_restrict_members"], msg=True)
-@chatAction("typing")
-async def ban_user(client, message):
-    target = await get_target(client, message)
-    if not target:
-        return await message.reply_text("Eh?! Reply to someone or give me their `@username` / ID to ban!")
-    await client.ban_chat_member(message.chat.id, target.id)
-    btn = InlineKeyboardMarkup([[InlineKeyboardButton("🔓 Unban", callback_data=f"unban_{target.id}")]])
-    await message.reply_text(f"💢 **Banned!** {target.mention} has been kicked out of my group!", reply_markup=btn)
+@router.message(Command("ban"), F.chat.type.in_({"group", "supergroup"}))
+async def ban_user(message: Message):
+    if not await is_admin(message, "can_restrict_members"):
+        return
+    tid = get_target_id(message)
+    if not tid:
+        return await message.answer("Reply to someone or pass their User ID to ban!")
+    await message.bot.ban_chat_member(message.chat.id, tid)
+    btn = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔓 Unban", callback_data=f"unban_{tid}")]])
+    await message.answer(f"💢 **Banned** `{tid}`! Nobody messes with my group!", reply_markup=btn)
 
 
-@Client.on_message(filters.command("unban") & filters.group)
-@groupOnly()
-@admin(rights=["can_restrict_members"], msg=True)
-@botAdmin(rights=["can_restrict_members"], msg=True)
-async def unban_user(client, message):
-    target = await get_target(client, message)
-    if not target:
-        return await message.reply_text("Tell me who to unban!")
-    await client.unban_chat_member(message.chat.id, target.id)
-    await message.reply_text(f"🌸 Fine~ I unbanned {target.mention}. Better behave!")
+@router.message(Command("unban"), F.chat.type.in_({"group", "supergroup"}))
+async def unban_user(message: Message):
+    if not await is_admin(message, "can_restrict_members"):
+        return
+    tid = get_target_id(message)
+    if not tid:
+        return await message.answer("Reply or pass User ID to unban!")
+    await message.bot.unban_chat_member(message.chat.id, tid)
+    await message.answer(f"🌸 Fine~ I unbanned `{tid}`. Better behave!")
 
 
-@Client.on_message(filters.command("tban") & filters.group)
-@groupOnly()
-@admin(rights=["can_restrict_members"], msg=True)
-@botAdmin(rights=["can_restrict_members"], msg=True)
-async def tban_user(client, message):
-    target = await get_target(client, message)
-    if not target or len(message.command) < 2:
-        return await message.reply_text("Usage: `/tban 1h` (reply) or `/tban @user 1d`")
-    until = parse_time(message.command[-1])
+@router.message(Command("tban"), F.chat.type.in_({"group", "supergroup"}))
+async def tban_user(message: Message):
+    if not await is_admin(message, "can_restrict_members"):
+        return
+    tid = get_target_id(message)
+    parts = message.text.split()
+    if not tid or len(parts) < 2:
+        return await message.answer("Usage: `/tban 1h` (reply)")
+    until = parse_time(parts[-1])
     if not until:
-        return await message.reply_text("Invalid time! Use `10m`, `2h`, or `1d`.")
-    await client.ban_chat_member(message.chat.id, target.id, until_date=until)
-    await message.reply_text(f"⏳ **Temp-Banned** {target.mention} for `{message.command[-1]}`!")
+        return await message.answer("Invalid time! Use `10m`, `2h`, or `1d`.")
+    await message.bot.ban_chat_member(message.chat.id, tid, until_date=until)
+    await message.answer(f"⏳ **Temp-Banned** `{tid}` for `{parts[-1]}`!")
 
 
-@Client.on_message(filters.command("dban") & filters.group)
-@groupOnly()
-@admin(rights=["can_restrict_members", "can_delete_messages"], msg=True)
-@botAdmin(rights=["can_restrict_members", "can_delete_messages"], msg=True)
-async def dban_user(client, message):
-    if not message.reply_to_message or not message.reply_to_message.from_user:
-        return await message.reply_text("Reply to a message to delete & ban!")
-    target = message.reply_to_message.from_user
+@router.message(Command("dban"), F.chat.type.in_({"group", "supergroup"}))
+async def dban_user(message: Message):
+    if not await is_admin(message, "can_restrict_members") or not message.reply_to_message:
+        return
+    tid = message.reply_to_message.from_user.id
     await message.reply_to_message.delete()
-    await client.ban_chat_member(message.chat.id, target.id)
-    await message.reply_text(f"💢 Deleted message & **Banned** {target.mention}!")
+    await message.bot.ban_chat_member(message.chat.id, tid)
+    await message.answer(f"💢 Deleted message & **Banned** `{tid}`!")
 
 
-@Client.on_message(filters.command("sban") & filters.group)
-@groupOnly()
-@admin(rights=["can_restrict_members", "can_delete_messages"], msg=True)
-@botAdmin(rights=["can_restrict_members", "can_delete_messages"], msg=True)
-async def sban_user(client, message):
-    target = await get_target(client, message)
+@router.message(Command("sban"), F.chat.type.in_({"group", "supergroup"}))
+async def sban_user(message: Message):
+    if not await is_admin(message, "can_restrict_members"):
+        return
+    tid = get_target_id(message)
     await message.delete()
-    if target:
-        await client.ban_chat_member(message.chat.id, target.id)
+    if tid:
+        await message.bot.ban_chat_member(message.chat.id, tid)
 
 
 # 7–9: /kick, /dkick, /skick
-@Client.on_message(filters.command("kick") & filters.group)
-@groupOnly()
-@admin(rights=["can_restrict_members"], msg=True)
-@botAdmin(rights=["can_restrict_members"], msg=True)
-async def kick_user(client, message):
-    target = await get_target(client, message)
-    if not target:
-        return await message.reply_text("Reply to someone to kick them!")
-    await client.ban_chat_member(message.chat.id, target.id)
-    await client.unban_chat_member(message.chat.id, target.id)
-    await message.reply_text(f"👢 **Kicked** {target.mention}!")
+@router.message(Command("kick"), F.chat.type.in_({"group", "supergroup"}))
+async def kick_user(message: Message):
+    if not await is_admin(message, "can_restrict_members"):
+        return
+    tid = get_target_id(message)
+    if not tid:
+        return await message.answer("Reply to someone to kick them!")
+    await message.bot.ban_chat_member(message.chat.id, tid)
+    await message.bot.unban_chat_member(message.chat.id, tid)
+    await message.answer(f"👢 **Kicked** `{tid}`!")
 
 
-@Client.on_message(filters.command("dkick") & filters.group)
-@groupOnly()
-@admin(rights=["can_restrict_members", "can_delete_messages"], msg=True)
-@botAdmin(rights=["can_restrict_members", "can_delete_messages"], msg=True)
-async def dkick_user(client, message):
-    if not message.reply_to_message or not message.reply_to_message.from_user:
-        return await message.reply_text("Reply to a message to delete & kick!")
-    target = message.reply_to_message.from_user
+@router.message(Command("dkick"), F.chat.type.in_({"group", "supergroup"}))
+async def dkick_user(message: Message):
+    if not await is_admin(message, "can_restrict_members") or not message.reply_to_message:
+        return
+    tid = message.reply_to_message.from_user.id
     await message.reply_to_message.delete()
-    await client.ban_chat_member(message.chat.id, target.id)
-    await client.unban_chat_member(message.chat.id, target.id)
-    await message.reply_text(f"👢 Deleted message & **Kicked** {target.mention}!")
+    await message.bot.ban_chat_member(message.chat.id, tid)
+    await message.bot.unban_chat_member(message.chat.id, tid)
+    await message.answer(f"👢 Deleted message & **Kicked** `{tid}`!")
 
 
-@Client.on_message(filters.command("skick") & filters.group)
-@groupOnly()
-@admin(rights=["can_restrict_members", "can_delete_messages"], msg=True)
-@botAdmin(rights=["can_restrict_members", "can_delete_messages"], msg=True)
-async def skick_user(client, message):
-    target = await get_target(client, message)
+@router.message(Command("skick"), F.chat.type.in_({"group", "supergroup"}))
+async def skick_user(message: Message):
+    if not await is_admin(message, "can_restrict_members"):
+        return
+    tid = get_target_id(message)
     await message.delete()
-    if target:
-        await client.ban_chat_member(message.chat.id, target.id)
-        await client.unban_chat_member(message.chat.id, target.id)
+    if tid:
+        await message.bot.ban_chat_member(message.chat.id, tid)
+        await message.bot.unban_chat_member(message.chat.id, tid)
 
 
 # 10–14: /mute, /unmute, /tmute, /dmute, /smute
-@Client.on_message(filters.command("mute") & filters.group)
-@groupOnly()
-@admin(rights=["can_restrict_members"], msg=True)
-@botAdmin(rights=["can_restrict_members"], msg=True)
-async def mute_user(client, message):
-    target = await get_target(client, message)
-    if not target:
-        return await message.reply_text("Reply to someone to mute them!")
-    await client.restrict_chat_member(message.chat.id, target.id, ChatPermissions())
-    btn = InlineKeyboardMarkup([[InlineKeyboardButton("🔊 Unmute", callback_data=f"unmute_{target.id}")]])
-    await message.reply_text(f"🤫 **Shh!** {target.mention} is muted!", reply_markup=btn)
+@router.message(Command("mute"), F.chat.type.in_({"group", "supergroup"}))
+async def mute_user(message: Message):
+    if not await is_admin(message, "can_restrict_members"):
+        return
+    tid = get_target_id(message)
+    if not tid:
+        return await message.answer("Reply to someone to mute them!")
+    await message.bot.restrict_chat_member(message.chat.id, tid, ChatPermissions(can_send_messages=False))
+    btn = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔊 Unmute", callback_data=f"unmute_{tid}")]])
+    await message.answer(f"🤫 **Shh!** `{tid}` is muted!", reply_markup=btn)
 
 
-@Client.on_message(filters.command("unmute") & filters.group)
-@groupOnly()
-@admin(rights=["can_restrict_members"], msg=True)
-@botAdmin(rights=["can_restrict_members"], msg=True)
-async def unmute_user(client, message):
-    target = await get_target(client, message)
-    if not target:
-        return await message.reply_text("Reply to someone to unmute them!")
-    await client.restrict_chat_member(
-        message.chat.id, target.id,
+@router.message(Command("unmute"), F.chat.type.in_({"group", "supergroup"}))
+async def unmute_user(message: Message):
+    if not await is_admin(message, "can_restrict_members"):
+        return
+    tid = get_target_id(message)
+    if not tid:
+        return await message.answer("Reply to someone to unmute them!")
+    await message.bot.restrict_chat_member(
+        message.chat.id, tid,
         ChatPermissions(can_send_messages=True, can_send_media_messages=True, can_send_other_messages=True)
     )
-    await message.reply_text(f"🔊 {target.mention} can talk again!")
+    await message.answer(f"🔊 `{tid}` can talk again!")
 
 
-@Client.on_message(filters.command("tmute") & filters.group)
-@groupOnly()
-@admin(rights=["can_restrict_members"], msg=True)
-@botAdmin(rights=["can_restrict_members"], msg=True)
-async def tmute_user(client, message):
-    target = await get_target(client, message)
-    if not target or len(message.command) < 2:
-        return await message.reply_text("Usage: `/tmute 30m` (reply)")
-    until = parse_time(message.command[-1])
+@router.message(Command("tmute"), F.chat.type.in_({"group", "supergroup"}))
+async def tmute_user(message: Message):
+    if not await is_admin(message, "can_restrict_members"):
+        return
+    tid = get_target_id(message)
+    parts = message.text.split()
+    if not tid or len(parts) < 2:
+        return await message.answer("Usage: `/tmute 30m` (reply)")
+    until = parse_time(parts[-1])
     if not until:
-        return await message.reply_text("Invalid time! Use `10m`, `2h`, or `1d`.")
-    await client.restrict_chat_member(message.chat.id, target.id, ChatPermissions(), until_date=until)
-    await message.reply_text(f"🤐 **Temp-Muted** {target.mention} for `{message.command[-1]}`!")
+        return await message.answer("Invalid time! Use `10m`, `2h`, or `1d`.")
+    await message.bot.restrict_chat_member(message.chat.id, tid, ChatPermissions(can_send_messages=False), until_date=until)
+    await message.answer(f"🤐 **Temp-Muted** `{tid}` for `{parts[-1]}`!")
 
 
-@Client.on_message(filters.command("dmute") & filters.group)
-@groupOnly()
-@admin(rights=["can_restrict_members", "can_delete_messages"], msg=True)
-@botAdmin(rights=["can_restrict_members", "can_delete_messages"], msg=True)
-async def dmute_user(client, message):
-    if not message.reply_to_message or not message.reply_to_message.from_user:
-        return await message.reply_text("Reply to a message to delete & mute!")
-    target = message.reply_to_message.from_user
+@router.message(Command("dmute"), F.chat.type.in_({"group", "supergroup"}))
+async def dmute_user(message: Message):
+    if not await is_admin(message, "can_restrict_members") or not message.reply_to_message:
+        return
+    tid = message.reply_to_message.from_user.id
     await message.reply_to_message.delete()
-    await client.restrict_chat_member(message.chat.id, target.id, ChatPermissions())
-    await message.reply_text(f"🤫 Deleted message & **Muted** {target.mention}!")
+    await message.bot.restrict_chat_member(message.chat.id, tid, ChatPermissions(can_send_messages=False))
+    await message.answer(f"🤫 Deleted message & **Muted** `{tid}`!")
 
 
-@Client.on_message(filters.command("smute") & filters.group)
-@groupOnly()
-@admin(rights=["can_restrict_members", "can_delete_messages"], msg=True)
-@botAdmin(rights=["can_restrict_members", "can_delete_messages"], msg=True)
-async def smute_user(client, message):
-    target = await get_target(client, message)
+@router.message(Command("smute"), F.chat.type.in_({"group", "supergroup"}))
+async def smute_user(message: Message):
+    if not await is_admin(message, "can_restrict_members"):
+        return
+    tid = get_target_id(message)
     await message.delete()
-    if target:
-        await client.restrict_chat_member(message.chat.id, target.id, ChatPermissions())
+    if tid:
+        await message.bot.restrict_chat_member(message.chat.id, tid, ChatPermissions(can_send_messages=False))
 
 
-# 15–17: /purge, /spurge, /del
-@Client.on_message(filters.command("purge") & filters.group)
-@groupOnly()
-@admin(rights=["can_delete_messages"], msg=True)
-@botAdmin(rights=["can_delete_messages"], msg=True)
-async def purge_msgs(client, message):
-    if not message.reply_to_message:
-        return await message.reply_text("Reply to the message where I should start purging!")
-    msg_ids = list(range(message.reply_to_message.id, message.id + 1))
-    await client.delete_messages(message.chat.id, msg_ids)
-    done = await message.reply_text(f"✨ Purged **{len(msg_ids)}** messages!")
+# 15–16: /purge, /del
+@router.message(Command("purge"), F.chat.type.in_({"group", "supergroup"}))
+async def purge_msgs(message: Message):
+    if not await is_admin(message, "can_delete_messages") or not message.reply_to_message:
+        return
+    msg_ids = list(range(message.reply_to_message.message_id, message.message_id + 1))
+    await message.bot.delete_messages(message.chat.id, msg_ids)
+    done = await message.answer(f"✨ Purged **{len(msg_ids)}** messages!")
     await asyncio.sleep(2)
     await done.delete()
 
 
-@Client.on_message(filters.command("spurge") & filters.group)
-@groupOnly()
-@admin(rights=["can_delete_messages"], msg=True)
-@botAdmin(rights=["can_delete_messages"], msg=True)
-async def spurge_msgs(client, message):
-    if not message.reply_to_message:
+@router.message(Command("del"), F.chat.type.in_({"group", "supergroup"}))
+async def del_msg(message: Message):
+    if not await is_admin(message, "can_delete_messages"):
         return
-    msg_ids = list(range(message.reply_to_message.id, message.id + 1))
-    await client.delete_messages(message.chat.id, msg_ids)
-
-
-@Client.on_message(filters.command("del") & filters.group)
-@groupOnly()
-@admin(rights=["can_delete_messages"], msg=True)
-@botAdmin(rights=["can_delete_messages"], msg=True)
-async def del_msg(client, message):
     if message.reply_to_message:
         await message.reply_to_message.delete()
     await message.delete()
 
 
-# 18–20: /pin, /unpin, /unpinall
-@Client.on_message(filters.command("pin") & filters.group)
-@groupOnly()
-@admin(rights=["can_pin_messages"], msg=True)
-@botAdmin(rights=["can_pin_messages"], msg=True)
-async def pin_msg(client, message):
-    if not message.reply_to_message:
-        return await message.reply_text("Reply to a message to pin it!")
-    await message.reply_to_message.pin(disable_notification=True)
-    btn = InlineKeyboardMarkup([[InlineKeyboardButton("📌 Unpin", callback_data=f"unpin_{message.reply_to_message.id}")]])
-    await message.reply_text("📌 **Pinned!**", reply_markup=btn)
+# 17–19: /pin, /unpin, /unpinall
+@router.message(Command("pin"), F.chat.type.in_({"group", "supergroup"}))
+async def pin_msg(message: Message):
+    if not await is_admin(message, "can_pin_messages") or not message.reply_to_message:
+        return
+    await message.bot.pin_chat_message(message.chat.id, message.reply_to_message.message_id, disable_notification=True)
+    btn = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="📌 Unpin", callback_data=f"unpin_{message.reply_to_message.message_id}")]])
+    await message.answer("📌 **Pinned!**", reply_markup=btn)
 
 
-@Client.on_message(filters.command("unpin") & filters.group)
-@groupOnly()
-@admin(rights=["can_pin_messages"], msg=True)
-@botAdmin(rights=["can_pin_messages"], msg=True)
-async def unpin_msg(client, message):
+@router.message(Command("unpin"), F.chat.type.in_({"group", "supergroup"}))
+async def unpin_msg(message: Message):
+    if not await is_admin(message, "can_pin_messages"):
+        return
     if message.reply_to_message:
-        await message.reply_to_message.unpin()
+        await message.bot.unpin_chat_message(message.chat.id, message.reply_to_message.message_id)
     else:
-        await client.unpin_chat_message(message.chat.id)
-    await message.reply_text("📌 Unpinned!")
+        await message.bot.unpin_chat_message(message.chat.id)
+    await message.answer("📌 Unpinned!")
 
 
-@Client.on_message(filters.command("unpinall") & filters.group)
-@groupOnly()
-@admin(rights=["can_pin_messages"], msg=True)
-@botAdmin(rights=["can_pin_messages"], msg=True)
-async def unpin_all_msgs(client, message):
-    await client.unpin_all_chat_messages(message.chat.id)
-    await message.reply_text("📌 All messages unpinned!")
+@router.message(Command("unpinall"), F.chat.type.in_({"group", "supergroup"}))
+async def unpin_all_msgs(message: Message):
+    if not await is_admin(message, "can_pin_messages"):
+        return
+    await message.bot.unpin_all_chat_messages(message.chat.id)
+    await message.answer("📌 All messages unpinned!")
 
 
-# 21–24: /promote, /fullpromote, /demote, /settitle
-@Client.on_message(filters.command("promote") & filters.group)
-@groupOnly()
-@admin(rights=["can_promote_members"], msg=True)
-@botAdmin(rights=["can_promote_members"], msg=True)
-async def promote_user(client, message):
-    target = await get_target(client, message)
-    if not target:
-        return await message.reply_text("Reply to someone to promote them!")
-    await client.promote_chat_member(
-        message.chat.id, target.id,
-        privileges=ChatPrivileges(
-            can_delete_messages=True, can_restrict_members=True,
-            can_invite_users=True, can_pin_messages=True, can_manage_video_chats=True
-        )
+# 20–22: /promote, /demote, /settitle
+@router.message(Command("promote"), F.chat.type.in_({"group", "supergroup"}))
+async def promote_user(message: Message):
+    if not await is_admin(message, "can_promote_members"):
+        return
+    tid = get_target_id(message)
+    if not tid:
+        return await message.answer("Reply to someone to promote them!")
+    await message.bot.promote_chat_member(
+        message.chat.id, tid,
+        can_delete_messages=True, can_restrict_members=True,
+        can_invite_users=True, can_pin_messages=True, can_manage_video_chats=True
     )
-    btn = InlineKeyboardMarkup([[InlineKeyboardButton("⬇️ Demote", callback_data=f"demote_{target.id}")]])
-    await message.reply_text(f"💓 **Doki-doki!** {target.mention} is now an Admin!", reply_markup=btn)
+    btn = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬇️ Demote", callback_data=f"demote_{tid}")]])
+    await message.answer(f"💓 **Doki-doki!** `{tid}` is now an Admin!", reply_markup=btn)
 
 
-@Client.on_message(filters.command("fullpromote") & filters.group)
-@groupOnly()
-@admin(rights=["can_promote_members"], msg=True)
-@botAdmin(rights=["can_promote_members"], msg=True)
-async def full_promote_user(client, message):
-    target = await get_target(client, message)
-    if not target:
-        return await message.reply_text("Reply to someone to full-promote them!")
-    await client.promote_chat_member(
-        message.chat.id, target.id,
-        privileges=ChatPrivileges(
-            can_manage_chat=True, can_delete_messages=True, can_restrict_members=True,
-            can_promote_members=True, can_change_info=True, can_invite_users=True,
-            can_pin_messages=True, can_manage_video_chats=True
-        )
-    )
-    await message.reply_text(f"👑 {target.mention} now has **ALL** Admin rights!")
+@router.message(Command("demote"), F.chat.type.in_({"group", "supergroup"}))
+async def demote_user(message: Message):
+    if not await is_admin(message, "can_promote_members"):
+        return
+    tid = get_target_id(message)
+    if not tid:
+        return await message.answer("Reply to an admin to demote them!")
+    await message.bot.promote_chat_member(message.chat.id, tid)
+    await message.answer(f"⬇️ `{tid}` has been demoted.")
 
 
-@Client.on_message(filters.command("demote") & filters.group)
-@groupOnly()
-@admin(rights=["can_promote_members"], msg=True)
-@botAdmin(rights=["can_promote_members"], msg=True)
-async def demote_user(client, message):
-    target = await get_target(client, message)
-    if not target:
-        return await message.reply_text("Reply to an admin to demote them!")
-    await client.promote_chat_member(message.chat.id, target.id, privileges=ChatPrivileges())
-    await message.reply_text(f"⬇️ {target.mention} has been demoted.")
+@router.message(Command("settitle"), F.chat.type.in_({"group", "supergroup"}))
+async def set_admin_title(message: Message):
+    if not await is_admin(message, "can_promote_members") or not message.reply_to_message:
+        return
+    parts = message.text.split(None, 1)
+    if len(parts) < 2:
+        return await message.answer("Usage: `/settitle <title>` (reply)")
+    await message.bot.set_chat_administrator_custom_title(message.chat.id, message.reply_to_message.from_user.id, parts[1][:16])
+    await message.answer(f"🏷️ Set admin title to **{parts[1][:16]}**!")
 
 
-@Client.on_message(filters.command("settitle") & filters.group)
-@groupOnly()
-@admin(rights=["can_promote_members"], msg=True)
-@botAdmin(rights=["can_promote_members"], msg=True)
-async def set_admin_title(client, message):
-    if not message.reply_to_message or len(message.command) < 2:
-        return await message.reply_text("Reply to an admin with `/settitle <title>`")
-    title = message.text.split(None, 1)[1][:16]
-    await client.set_administrator_title(message.chat.id, message.reply_to_message.from_user.id, title)
-    await message.reply_text(f"🏷️ Set admin title to **{title}**!")
+# 23–27: /invitelink, /setgtitle, /setgdesc, /slowmode, /admins
+@router.message(Command("invitelink"), F.chat.type.in_({"group", "supergroup"}))
+async def get_invite(message: Message):
+    if not await is_admin(message, "can_invite_users"):
+        return
+    link = await message.bot.export_chat_invite_link(message.chat.id)
+    await message.answer(f"🔗 **Group Invite Link:**\n{link}")
 
 
-# 25–30: /invitelink, /revokeinvite, /setgtitle, /setgdesc, /delgpic, /slowmode
-@Client.on_message(filters.command("invitelink") & filters.group)
-@groupOnly()
-@admin(rights=["can_invite_users"], msg=True)
-@botAdmin(rights=["can_invite_users"], msg=True)
-async def get_invite(client, message):
-    link = await client.export_chat_invite_link(message.chat.id)
-    await message.reply_text(f"🔗 **Group Invite Link:**\n{link}")
+@router.message(Command("setgtitle"), F.chat.type.in_({"group", "supergroup"}))
+async def set_group_title(message: Message):
+    if not await is_admin(message, "can_change_info"):
+        return
+    parts = message.text.split(None, 1)
+    if len(parts) < 2:
+        return await message.answer("Give me a new group title!")
+    await message.bot.set_chat_title(message.chat.id, parts[1])
+    await message.answer(f"✨ Group title changed to **{parts[1]}**!")
 
 
-@Client.on_message(filters.command("revokeinvite") & filters.group)
-@groupOnly()
-@admin(rights=["can_invite_users"], msg=True)
-@botAdmin(rights=["can_invite_users"], msg=True)
-async def revoke_invite(client, message):
-    link = await client.revoke_chat_invite_link(message.chat.id, await client.export_chat_invite_link(message.chat.id))
-    await message.reply_text(f"🔄 **New Invite Link:**\n{link.invite_link}")
+@router.message(Command("setgdesc"), F.chat.type.in_({"group", "supergroup"}))
+async def set_group_desc(message: Message):
+    if not await is_admin(message, "can_change_info"):
+        return
+    parts = message.text.split(None, 1)
+    if len(parts) < 2:
+        return await message.answer("Give me a new group description!")
+    await message.bot.set_chat_description(message.chat.id, parts[1])
+    await message.answer("📝 Group description updated!")
 
 
-@Client.on_message(filters.command("setgtitle") & filters.group)
-@groupOnly()
-@admin(rights=["can_change_info"], msg=True)
-@botAdmin(rights=["can_change_info"], msg=True)
-async def set_group_title(client, message):
-    if len(message.command) < 2:
-        return await message.reply_text("Give me a new group title!")
-    new_title = message.text.split(None, 1)[1]
-    await client.set_chat_title(message.chat.id, new_title)
-    await message.reply_text(f"✨ Group title changed to **{new_title}**!")
+@router.message(Command("slowmode"), F.chat.type.in_({"group", "supergroup"}))
+async def set_slowmode(message: Message):
+    if not await is_admin(message, "can_restrict_members"):
+        return
+    parts = message.text.split()
+    if len(parts) < 2 or not parts[1].isdigit():
+        return await message.answer("Usage: `/slowmode 10` (0, 10, 30, 60, 300, 900, 3600)")
+    sec = int(parts[1])
+    await message.bot.set_chat_slow_mode_delay(message.chat.id, sec)
+    await message.answer(f"🐢 Slowmode set to **{sec}s**!" if sec > 0 else "🐇 Slowmode disabled!")
 
 
-@Client.on_message(filters.command("setgdesc") & filters.group)
-@groupOnly()
-@admin(rights=["can_change_info"], msg=True)
-@botAdmin(rights=["can_change_info"], msg=True)
-async def set_group_desc(client, message):
-    if len(message.command) < 2:
-        return await message.reply_text("Give me a new group description!")
-    await client.set_chat_description(message.chat.id, message.text.split(None, 1)[1])
-    await message.reply_text("📝 Group description updated!")
-
-
-@Client.on_message(filters.command("delgpic") & filters.group)
-@groupOnly()
-@admin(rights=["can_change_info"], msg=True)
-@botAdmin(rights=["can_change_info"], msg=True)
-async def del_group_pic(client, message):
-    await client.delete_chat_photo(message.chat.id)
-    await message.reply_text("🗑️ Group photo deleted!")
-
-
-@Client.on_message(filters.command("slowmode") & filters.group)
-@groupOnly()
-@admin(rights=["can_restrict_members"], msg=True)
-@botAdmin(rights=["can_restrict_members"], msg=True)
-async def set_slowmode(client, message):
-    if len(message.command) < 2 or not message.command[1].isdigit():
-        return await message.reply_text("Usage: `/slowmode 10` (0, 10, 30, 60, 300, 900, 3600)")
-    sec = int(message.command[1])
-    await client.set_slow_mode(message.chat.id, sec)
-    await message.reply_text(f"🐢 Slowmode set to **{sec}s**!" if sec > 0 else "🐇 Slowmode disabled!")
-
-
-# 31–32: /zombies, /admins
-@Client.on_message(filters.command("zombies") & filters.group)
-@groupOnly()
-@admin(rights=["can_restrict_members"], msg=True)
-@botAdmin(rights=["can_restrict_members"], msg=True)
-async def clean_zombies(client, message):
-    deleted = 0
-    async for m in client.get_chat_members(message.chat.id):
-        if m.user.is_deleted:
-            try:
-                await client.ban_chat_member(message.chat.id, m.user.id)
-                await client.unban_chat_member(message.chat.id, m.user.id)
-                deleted += 1
-            except Exception:
-                pass
-    await message.reply_text(f"🧟 Cleaned **{deleted}** deleted accounts!")
-
-
-@Client.on_message(filters.command("admins") & filters.group)
-@groupOnly()
-async def list_admins(client, message):
-    admins = []
-    async for m in client.get_chat_members(message.chat.id, filter=ChatMembersFilter.ADMINISTRATORS):
+@router.message(Command("admins"), F.chat.type.in_({"group", "supergroup"}))
+async def list_admins(message: Message):
+    admins = await message.bot.get_chat_administrators(message.chat.id)
+    lines = []
+    for m in admins:
         if not m.user.is_bot:
-            role = "👑" if m.status.name == "OWNER" else "⭐"
-            admins.append(f"{role} {m.user.mention}")
-    await message.reply_text(f"🛡️ **{message.chat.title} Admins:**\n\n" + "\n".join(admins))
+            role = "👑" if m.status == "creator" else "⭐"
+            lines.append(f"{role} {m.user.full_name}")
+    await message.answer(f"🛡️ **{message.chat.title} Admins:**\n\n" + "\n".join(lines))
 
 
 # --- Callback Handler ---
-@Client.on_callback_query(filters.regex(r"^(unban_|unmute_|demote_|unpin_|adm_)"))
-async def admin_callbacks(client, query):
+@router.callback_query(F.data.startswith(("unban_", "unmute_", "demote_", "unpin_", "adm_")))
+async def admin_callbacks(query: CallbackQuery):
     data, chat_id = query.data, query.message.chat.id
 
     if data == "adm_close":
@@ -471,25 +381,24 @@ async def admin_callbacks(client, query):
     if data == "adm_guide":
         return await query.answer("Use /ban, /dban, /sban, /tban, /mute, /dmute, /purge, /promote, /slowmode!", show_alert=True)
     if data == "adm_invite":
-        link = await client.export_chat_invite_link(chat_id)
-        return await query.message.reply_text(f"🔗 {link}")
+        link = await query.bot.export_chat_invite_link(chat_id)
+        return await query.message.answer(f"🔗 {link}")
     if data == "adm_unpinall":
-        await client.unpin_all_chat_messages(chat_id)
+        await query.bot.unpin_all_chat_messages(chat_id)
         return await query.answer("📌 All messages unpinned!", show_alert=True)
-    if data == "adm_zombies":
-        return await query.answer("Run /zombies in chat to clean deleted accounts!", show_alert=True)
 
     action, target_id = data.split("_")
     target_id = int(target_id)
     if action == "unban":
-        await client.unban_chat_member(chat_id, target_id)
+        await query.bot.unban_chat_member(chat_id, target_id)
         await query.message.edit_text("🌸 Unbanned via button!")
     elif action == "unmute":
-        await client.restrict_chat_member(chat_id, target_id, ChatPermissions(can_send_messages=True))
+        await query.bot.restrict_chat_member(chat_id, target_id, ChatPermissions(can_send_messages=True))
         await query.message.edit_text("🔊 Unmuted via button!")
     elif action == "demote":
-        await client.promote_chat_member(chat_id, target_id, privileges=ChatPrivileges())
+        await query.bot.promote_chat_member(chat_id, target_id)
         await query.message.edit_text("⬇️ Demoted via button!")
     elif action == "unpin":
-        await client.unpin_chat_message(chat_id, target_id)
+        await query.bot.unpin_chat_message(chat_id, target_id)
         await query.message.edit_text("📌 Unpinned via button!")
+    await query.answer()
