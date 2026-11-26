@@ -1,14 +1,3 @@
-Let's do this Ruka's way—100% original wording, cleaner UX, and real live
-enforcement in PostgreSQL!
-
-First, here is your fixed RUKA/plugins/database.py (pure-Python JSON /backup
-that works on Render without pg_dump), followed by your upgraded
-RUKA/plugins/locks_misc.py (with /dwarn, /swarn, /warnmode, /floodmode, 15+ lock
-types including cjk, cyrillic, gif, voice, url, /unapproveall, /privacy,
-/reconnect, /leavefed, and live security enforcement!).
-
-1. Replace RUKA/plugins/database.py (Pure-Python Backup—Works 100% on Render!)
-
 import json
 from io import BytesIO
 from aiogram import Router
