@@ -431,7 +431,7 @@ async def misc_cmds(message: Message):
 
 
 # --- 6. LIVE SECURITY, FILTER & AFK ENFORCEMENT WATCHER ---
-@router.message(F.chat.type.in_({"group", "supergroup"}))
+@router.message(F.chat.type.in_({"group", "supergroup"}), ~F.text.startswith(("/", "!")))
 async def security_watcher(message: Message):
     if not message.from_user or message.from_user.is_bot:
         return
