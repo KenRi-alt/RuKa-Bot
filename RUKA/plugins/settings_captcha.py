@@ -1,14 +1,15 @@
-import asyncio
+import random, asyncio
 from aiogram import Router, F
 from aiogram.filters import Command
 from aiogram.types import Message, CallbackQuery, ChatPermissions, InlineKeyboardMarkup, InlineKeyboardButton
 from RUKA.utils.db import (
-    get_chat_settings, toggle_setting, add_filter, remove_filter, get_filters,
+    get_pool, get_chat_settings, toggle_setting, add_filter, remove_filter, get_filters,
     disable_cmd, enable_cmd, get_disabled_cmds, get_chat_fed, is_fbanned, get_log_channel
 )
 
 router = Router()
 PENDING_CAPTCHA: set[tuple[int, int]] = set()
+CAPTCHA_MODES: dict[int, str] = {}  # chat_id -> "button" | "math"
 
 
 async def _is_adm(message: Message) -> bool:
@@ -32,12 +33,13 @@ def _settings_markup(s: dict) -> InlineKeyboardMarkup:
     ])
 
 
+# --- 1. /settings Panel ---
 @router.message(Command("settings", prefix="/!"), F.chat.type.in_({"group", "supergroup"}))
 async def settings_panel(message: Message):
     if not await _is_adm(message):
         return await message.answer("❌ Admins only!")
     s = await get_chat_settings(message.chat.id)
-    await message.answer(f"⚙️ **{message.chat.title} — Settings**", reply_markup=_settings_markup(s))
+    await message.answer(f"⚙️ **{message.chat.title} — Security & Settings**", reply_markup=_settings_markup(s))
 
 
 @router.callback_query(F.data.startswith("set_"))
@@ -62,7 +64,8 @@ async def settings_callbacks(query: CallbackQuery):
             pass
 
 
-@router.message(Command("antiraid", "cleanservice", "cleancommand", prefix="/!"), F.chat.type.in_({"group", "supergroup"}))
+# --- 2. Quick Toggles & CAPTCHA Mode ---
+@router.message(Command("captcha", "antiraid", "cleanservice", "cleancommand", prefix="/!"), F.chat.type.in_({"group", "supergroup"}))
 async def quick_toggle_cmd(message: Message):
     if not await _is_adm(message):
         return await message.answer("❌ Admins only!")
@@ -71,17 +74,31 @@ async def quick_toggle_cmd(message: Message):
     await message.answer(f"🛡️ **{cmd.capitalize()}** is now **{'ON ✅' if new_val else 'OFF ❌'}**!")
 
 
+@router.message(Command("captchamode", prefix="/!"), F.chat.type.in_({"group", "supergroup"}))
+async def captchamode_cmd(message: Message):
+    if not await _is_adm(message):
+        return await message.answer("❌ Admins only!")
+    p = message.text.split()
+    if len(p) > 1 and p[1].lower() in ("button", "math"):
+        CAPTCHA_MODES[message.chat.id] = p[1].lower()
+        return await message.answer(f"🛡️ CAPTCHA mode set to **{p[1].lower()}**!")
+    await message.answer("Usage: `/captchamode button` or `/captchamode math`")
+
+
+# --- 3. Join Handler: Fed-Ban + Anti-Raid + Button/Math CAPTCHA ---
 @router.message(F.new_chat_members)
 async def on_user_join(message: Message):
     cid = message.chat.id
     s = await get_chat_settings(cid)
-    if s["cleanservice"]:
+    if s.get("cleanservice"):
         try:
             await message.delete()
         except Exception:
             pass
 
     fed_id = await get_chat_fed(cid)
+    mode = CAPTCHA_MODES.get(cid, "button")
+
     for user in message.new_chat_members:
         if user.is_bot:
             continue
@@ -90,23 +107,33 @@ async def on_user_join(message: Message):
             if reason:
                 try:
                     await message.bot.ban_chat_member(cid, user.id)
-                    await message.answer(f"🌐 **Fed-Banned User Blocked:** {user.full_name} (`{reason}`)")
+                    await message.answer(f"🌐 **Fed-Banned User Blocked:** {user.full_name} (`{reason}`)", parse_mode=None)
                 except Exception:
                     pass
                 continue
-        if s["antiraid"]:
+        if s.get("antiraid"):
             try:
                 await message.bot.ban_chat_member(cid, user.id)
                 await message.bot.unban_chat_member(cid, user.id)
             except Exception:
                 pass
             continue
-        if s["captcha"]:
+        if s.get("captcha"):
             try:
                 await message.bot.restrict_chat_member(cid, user.id, ChatPermissions(can_send_messages=False))
                 PENDING_CAPTCHA.add((cid, user.id))
-                btn = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="✅ I'm Human!", callback_data=f"cap_{user.id}")]])
-                cap_msg = await message.answer(f"🛡️ **Verify within 2 mins:** {user.full_name}", reply_markup=btn)
+                if mode == "math":
+                    a, b = random.randint(1, 9), random.randint(1, 9)
+                    ans = a + b
+                    opts = [ans, ans + random.randint(1, 3), max(1, ans - random.randint(1, 3))]
+                    random.shuffle(opts)
+                    btns = [[InlineKeyboardButton(text=str(o), callback_data=f"cap_{user.id}_{1 if o == ans else 0}") for o in opts]]
+                    txt = f"🛡️ **Math Verification!**\n{user.full_name}, solve **{a} + {b} = ?** within 2 mins:"
+                else:
+                    btns = [[InlineKeyboardButton(text="✅ I'm Human!", callback_data=f"cap_{user.id}_1")]]
+                    txt = f"🛡️ **Verification Required!**\n{user.full_name}, tap below within **2 minutes**:"
+
+                cap_msg = await message.answer(txt, reply_markup=InlineKeyboardMarkup(inline_keyboard=btns), parse_mode=None)
                 asyncio.create_task(_captcha_timeout(message.bot, cid, user.id, cap_msg.message_id))
             except Exception:
                 pass
@@ -126,80 +153,74 @@ async def _captcha_timeout(bot, cid: int, uid: int, msg_id: int):
 
 @router.callback_query(F.data.startswith("cap_"))
 async def captcha_verify(query: CallbackQuery):
-    target_id = int(query.data.split("_")[1])
+    parts = query.data.split("_")
+    target_id, is_ok = int(parts[1]), int(parts[2])
     if query.from_user.id != target_id:
         return await query.answer("❌ Not for you!", show_alert=True)
+    if not is_ok:
+        return await query.answer("❌ Wrong answer! Try again.", show_alert=True)
+
     PENDING_CAPTCHA.discard((query.message.chat.id, target_id))
     await query.bot.restrict_chat_member(
         query.message.chat.id, target_id,
         ChatPermissions(can_send_messages=True, can_send_media_messages=True, can_send_other_messages=True)
     )
-    await query.message.edit_text(f"✅ {query.from_user.full_name} verified! Welcome~ 🌸")
+    await query.message.edit_text(f"✅ {query.from_user.full_name} verified! Welcome~ 🌸", parse_mode=None)
 
 
+# --- 4. Clean Service Messages ---
 @router.message(F.left_chat_member | F.pinned_message | F.new_chat_title | F.new_chat_photo)
 async def clean_service_msgs(message: Message):
     s = await get_chat_settings(message.chat.id)
-    if s["cleanservice"]:
+    if s.get("cleanservice"):
         try:
             await message.delete()
         except Exception:
             pass
 
 
-@router.message(Command("disable", prefix="/!"), F.chat.type.in_({"group", "supergroup"}))
-async def disable_command(message: Message):
+# --- 5. Command Disabling (/disable, /enable, /disabled) ---
+@router.message(Command("disable", "enable", "disabled", prefix="/!"), F.chat.type.in_({"group", "supergroup"}))
+async def disable_cmds(message: Message):
+    cmd = message.text.split()[0].lstrip("/!").lower()
+    if cmd == "disabled":
+        cmds = await get_disabled_cmds(message.chat.id)
+        return await message.answer("🚫 **Disabled:**\n• " + "\n• ".join(cmds) if cmds else "✅ None disabled.")
     if not await _is_adm(message):
         return await message.answer("❌ Admins only!")
-    parts = message.text.split()
-    if len(parts) < 2:
-        return await message.answer("Usage: `/disable gacha`")
-    cmd = parts[1].lstrip("/!").lower()
-    await disable_cmd(message.chat.id, cmd)
-    await message.answer(f"🚫 Disabled `/{cmd}`.")
+    p = message.text.split()
+    if len(p) < 2:
+        return await message.answer(f"Usage: `/{cmd} gacha`")
+    target = p[1].lstrip("/!").lower()
+    if cmd == "disable":
+        await disable_cmd(message.chat.id, target); await message.answer(f"🚫 Disabled `/{target}`.")
+    else:
+        await enable_cmd(message.chat.id, target); await message.answer(f"✅ Enabled `/{target}`.")
 
 
-@router.message(Command("enable", prefix="/!"), F.chat.type.in_({"group", "supergroup"}))
-async def enable_command(message: Message):
+# --- 6. Auto-Filters (/filter, /stop, /stopall, /filters) ---
+@router.message(Command("filter", "stop", "stopall", "filters", prefix="/!"), F.chat.type.in_({"group", "supergroup"}))
+async def filter_cmds(message: Message):
+    cmd = message.text.split()[0].lstrip("/!").lower()
+    if cmd == "filters":
+        flts = await get_filters(message.chat.id)
+        return await message.answer("📝 **Filters:**\n• " + "\n• ".join(flts.keys()) if flts else "📝 No active filters.")
     if not await _is_adm(message):
         return await message.answer("❌ Admins only!")
-    parts = message.text.split()
-    if len(parts) < 2:
-        return await message.answer("Usage: `/enable gacha`")
-    cmd = parts[1].lstrip("/!").lower()
-    await enable_cmd(message.chat.id, cmd)
-    await message.answer(f"✅ Enabled `/{cmd}`.")
-
-
-@router.message(Command("disabled", prefix="/!"), F.chat.type.in_({"group", "supergroup"}))
-async def list_disabled(message: Message):
-    cmds = await get_disabled_cmds(message.chat.id)
-    await message.answer("🚫 **Disabled:**\n• " + "\n• ".join(cmds) if cmds else "✅ None disabled.")
-
-
-@router.message(Command("filter", prefix="/!"), F.chat.type.in_({"group", "supergroup"}))
-async def add_filter_cmd(message: Message):
-    if not await _is_adm(message):
-        return await message.answer("❌ Admins only!")
-    parts = message.text.split(None, 2)
-    if len(parts) < 3:
-        return await message.answer("Usage: `/filter <word> <reply>`")
-    await add_filter(message.chat.id, parts[1].lower(), parts[2])
-    await message.answer(f"✨ Filter added for `{parts[1].lower()}`!")
-
-
-@router.message(Command("stop", prefix="/!"), F.chat.type.in_({"group", "supergroup"}))
-async def stop_filter_cmd(message: Message):
-    if not await _is_adm(message):
-        return await message.answer("❌ Admins only!")
-    parts = message.text.split()
-    if len(parts) < 2:
-        return await message.answer("Usage: `/stop <word>`")
-    await remove_filter(message.chat.id, parts[1].lower())
-    await message.answer(f"🗑️ Filter `{parts[1].lower()}` removed!")
-
-
-@router.message(Command("filters", prefix="/!"), F.chat.type.in_({"group", "supergroup"}))
-async def list_filters_cmd(message: Message):
-    flts = await get_filters(message.chat.id)
-    await message.answer("📝 **Filters:**\n• " + "\n• ".join(flts.keys()) if flts else "📝 No active filters.")
+    if cmd == "stopall":
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute("DELETE FROM chat_filters WHERE chat_id=$1", message.chat.id)
+        return await message.answer("🗑️ Removed ALL filters!")
+    if cmd == "filter":
+        p = message.text.split(None, 2)
+        if len(p) < 3:
+            return await message.answer("Usage: `/filter <word> <reply>`")
+        await add_filter(message.chat.id, p[1].lower(), p[2])
+        await message.answer(f"✨ Filter added for `{p[1].lower()}`!")
+    elif cmd == "stop":
+        p = message.text.split()
+        if len(p) < 2:
+            return await message.answer("Usage: `/stop <word>`")
+        await remove_filter(message.chat.id, p[1].lower())
+        await message.answer(f"🗑️ Filter `{p[1].lower()}` removed!")
