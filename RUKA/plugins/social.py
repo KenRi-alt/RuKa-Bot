@@ -44,56 +44,65 @@ async def fetch_bytes(url: str) -> BytesIO | None:
     return None
 
 
-# --- 1. REAL ANIME GIF REACTIONS (waifu.pics API) ---
+# --- 1. REAL ANIME GIF REACTIONS (waifu.pics + nekos.best fallback) ---
 GIF_REACTIONS = {
-    "hug": ("sfw/hug", "🤗 {u1} gives a warm hug to {u2}!"),
-    "kiss": ("sfw/kiss", "💋 {u1} gives a sweet kiss to {u2}!"),
-    "slap": ("sfw/slap", "💢 *SLAP!* {u1} slapped {u2}!"),
-    "pat": ("sfw/pat", "👋 {u1} gently pats {u2}~"),
-    "cuddle": ("sfw/cuddle", "🌸 {u1} cuddles with {u2}!"),
-    "poke": ("sfw/poke", "👉 {u1} pokes {u2}!"),
-    "wink": ("sfw/wink", "😉 {u1} winks at {u2}!"),
-    "cringe": ("sfw/cringe", "😬 {u1} cringes at {u2}..."),
-    "bite": ("sfw/bite", "🧛 {u1} bites {u2}!"),
-    "bonk": ("sfw/bonk", "🔨 *BONK!* {u1} bonks {u2}!"),
-    "blush": ("sfw/blush", "😳 {u1} is blushing!"),
-    "cry": ("sfw/cry", "😭 {u1} is crying..."),
-    "dance": ("sfw/dance", "💃 {u1} is dancing!"),
-    "smile": ("sfw/smile", "😊 {u1} smiles warmly!"),
-    "wave": ("sfw/wave", "👋 {u1} waves at {u2}!"),
-    "highfive": ("sfw/highfive", "🙌 {u1} high-fives {u2}!"),
-    "handhold": ("sfw/handhold", "🤝 {u1} holds hands with {u2}!"),
-    "tickle": ("sfw/tickle", "🤭 {u1} tickles {u2}!"),
-    "yeet": ("sfw/yeet", "🚀 {u1} YEETS {u2}!"),
-    "kill": ("sfw/kill", "⚔️ {u1} eliminates {u2}!"),
-    "happy": ("sfw/happy", "✨ {u1} is super happy!"),
-    "smug": ("sfw/smug", "😏 {u1} looks smug~"),
-    "glare": ("sfw/glare", "👀 {u1} glares at {u2}..."),
-    "sleep": ("sfw/sleep", "😴 {u1} fell asleep~"),
+    "hug": ("hug", "🤗 {u1} gives a warm hug to {u2}!"),
+    "kiss": ("kiss", "💋 {u1} gives a sweet kiss to {u2}!"),
+    "slap": ("slap", "💢 *SLAP!* {u1} slapped {u2}!"),
+    "pat": ("pat", "👋 {u1} gently pats {u2}~"),
+    "cuddle": ("cuddle", "🌸 {u1} cuddles with {u2}!"),
+    "poke": ("poke", "👉 {u1} pokes {u2}!"),
+    "wink": ("wink", "😉 {u1} winks at {u2}!"),
+    "cringe": ("cringe", "😬 {u1} cringes at {u2}..."),
+    "bite": ("bite", "🧛 {u1} bites {u2}!"),
+    "bonk": ("bonk", "🔨 *BONK!* {u1} bonks {u2}!"),
+    "blush": ("blush", "😳 {u1} is blushing!"),
+    "cry": ("cry", "😭 {u1} is crying..."),
+    "dance": ("dance", "💃 {u1} is dancing!"),
+    "smile": ("smile", "😊 {u1} smiles warmly!"),
+    "wave": ("wave", "👋 {u1} waves at {u2}!"),
+    "highfive": ("highfive", "🙌 {u1} high-fives {u2}!"),
+    "handhold": ("handhold", "🤝 {u1} holds hands with {u2}!"),
+    "tickle": ("tickle", "🤭 {u1} tickles {u2}!"),
+    "yeet": ("yeet", "🚀 {u1} YEETS {u2}!"),
+    "kill": ("kill", "⚔️ {u1} eliminates {u2}!"),
+    "happy": ("happy", "✨ {u1} is super happy!"),
+    "smug": ("smug", "😏 {u1} looks smug~"),
+    "glare": ("glare", "👀 {u1} glares at {u2}..."),
+    "sleep": ("sleep", "😴 {u1} fell asleep~"),
 }
 
 
-@router.message(Command(*GIF_REACTIONS.keys()))
+@router.message(Command(*GIF_REACTIONS.keys(), prefix="/!"))
 async def gif_reaction_cmd(message: Message):
-    cmd = message.text.split()[0].lstrip("/").split("@")[0].lower()
+    cmd = message.text.split()[0].lstrip("/!").split("@")[0].lower()
     endpoint, template = GIF_REACTIONS[cmd]
-    data = await fetch_json(f"https://api.waifu.pics/{endpoint}")
-    if not data or "url" not in data:
+
+    # Try waifu.pics first, then nekos.best fallback
+    url = None
+    data = await fetch_json(f"https://api.waifu.pics/sfw/{endpoint}")
+    if data and "url" in data:
+        url = data["url"]
+    else:
+        nb = await fetch_json(f"https://nekos.best/api/v2/{endpoint}")
+        if nb and nb.get("results"):
+            url = nb["results"][0].get("url")
+
+    if not url:
         return await message.answer("❌ Couldn't fetch GIF right now!")
 
     u1 = message.from_user.full_name
     u2 = message.reply_to_message.from_user.full_name if message.reply_to_message and message.reply_to_message.from_user else "everyone"
     caption = template.format(u1=u1, u2=u2)
 
-    url = data["url"]
     if url.endswith(".gif"):
-        await message.answer_animation(url, caption=caption)
+        await message.answer_animation(url, caption=caption, parse_mode=None)
     else:
-        await message.answer_photo(url, caption=caption)
+        await message.answer_photo(url, caption=caption, parse_mode=None)
 
 
 # --- 2. MARRIAGE & SOULMATES ---
-@router.message(Command("marry"))
+@router.message(Command("marry", prefix="/!"))
 async def marry_cmd(message: Message):
     if not message.reply_to_message or not message.reply_to_message.from_user:
         return await message.answer("💍 Reply to the person you want to propose to!")
@@ -106,8 +115,8 @@ async def marry_cmd(message: Message):
         InlineKeyboardButton(text="💔 Reject", callback_data=f"m_rej_{target.id}")
     ]])
     await message.answer(
-        f"💍 **{message.from_user.full_name}** is proposing to **{target.full_name}**!\nWill you accept?",
-        reply_markup=btn
+        f"💍 {message.from_user.full_name} is proposing to {target.full_name}!\nWill you accept?",
+        reply_markup=btn, parse_mode=None
     )
 
 
@@ -119,24 +128,23 @@ async def marriage_cb(query: CallbackQuery):
         return await query.answer("❌ This proposal isn't for you!", show_alert=True)
 
     if action == "acc":
-        proposer_id = int(parts[3])
-        await set_marriage(proposer_id, target_id)
-        await query.message.edit_text(f"💖 **It's Official!** {query.from_user.full_name} is now married! 🌸")
+        await set_marriage(int(parts[3]), target_id)
+        await query.message.edit_text(f"💖 It's Official! {query.from_user.full_name} is now married! 🌸", parse_mode=None)
     else:
         await query.message.edit_text("💔 The proposal was rejected. 😭")
     await query.answer()
 
 
-@router.message(Command("partner", "marriagestatus"))
+@router.message(Command("partner", "marriagestatus", prefix="/!"))
 async def partner_cmd(message: Message):
     target = message.reply_to_message.from_user if message.reply_to_message else message.from_user
     pid = await get_partner(target.id)
     if not pid:
-        return await message.answer(f"🔎 **{target.full_name}** is currently single.")
-    await message.answer(f"💞 **{target.full_name}'s Partner ID:** `{pid}`\nStatus: **Soulmates** ✨")
+        return await message.answer(f"🔎 {target.full_name} is currently single.", parse_mode=None)
+    await message.answer(f"💞 {target.full_name}'s Partner ID: `{pid}`\nStatus: **Soulmates** ✨")
 
 
-@router.message(Command("divorce"))
+@router.message(Command("divorce", prefix="/!"))
 async def divorce_cmd(message: Message):
     pid = await get_partner(message.from_user.id)
     if not pid:
@@ -145,56 +153,55 @@ async def divorce_cmd(message: Message):
     await message.answer("💔 You are now divorced. The bond has ended...")
 
 
-# --- 3. FAMILY & LINEAGE (/adopt, /disown, /sibling, /family, /tree) ---
-@router.message(Command("adopt"))
+# --- 3. FAMILY & LINEAGE ---
+@router.message(Command("adopt", prefix="/!"))
 async def adopt_cmd(message: Message):
     if not message.reply_to_message or not message.reply_to_message.from_user:
         return await message.answer("Reply to someone to adopt them!")
     t = message.reply_to_message.from_user
     await add_relation(message.from_user.id, t.id, "child")
-    await message.answer(f"🏠 **Adopted!** {t.full_name} is now your child!")
+    await message.answer(f"🏠 Adopted! {t.full_name} is now your child!", parse_mode=None)
 
 
-@router.message(Command("sibling"))
+@router.message(Command("sibling", prefix="/!"))
 async def sibling_cmd(message: Message):
     if not message.reply_to_message or not message.reply_to_message.from_user:
         return await message.answer("Reply to someone to add as your sibling!")
     t = message.reply_to_message.from_user
     await add_relation(message.from_user.id, t.id, "sibling")
-    await message.answer(f"👫 **Family!** {t.full_name} is now your sibling!")
+    await message.answer(f"👫 Family! {t.full_name} is now your sibling!", parse_mode=None)
 
 
-@router.message(Command("disown"))
+@router.message(Command("disown", prefix="/!"))
 async def disown_cmd(message: Message):
     if not message.reply_to_message or not message.reply_to_message.from_user:
         return await message.answer("Reply to a family member to disown them!")
     t = message.reply_to_message.from_user
-    await message.answer(f"❌ **{t.full_name}** has been disowned from your family!")
+    await message.answer(f"❌ {t.full_name} has been disowned from your family!", parse_mode=None)
 
 
-@router.message(Command("family", "tree"))
+@router.message(Command("family", "tree", prefix="/!"))
 async def family_tree_cmd(message: Message):
     fam = await get_family(message.from_user.id)
     pid = await get_partner(message.from_user.id)
-    lines = [f"🌳 **{message.from_user.full_name}'s Family Tree**", f"👤 You (`{message.from_user.id}`)"]
+    lines = [f"🌳 {message.from_user.full_name}'s Family Tree", f"👤 You ({message.from_user.id})"]
     if pid:
-        lines.append(f" ├── 💍 Spouse: `{pid}`")
+        lines.append(f" ├── 💍 Spouse: {pid}")
     for f in fam:
         icon = "👶" if f["relation_type"] == "child" else "👫"
-        lines.append(f" └── {icon} {f['relation_type'].capitalize()}: `{f['relative_id']}`")
+        lines.append(f" └── {icon} {f['relation_type'].capitalize()}: {f['relative_id']}")
     if not pid and not fam:
         return await message.answer("🏡 Your family tree is empty! Use `/marry` or `/adopt`~")
-    await message.answer("\n".join(lines))
+    await message.answer("\n".join(lines), parse_mode=None)
 
 
-# --- 4. MATCHED WAIFU & HUSBANDO GACHA (AniList Official API) ---
+# --- 4. MATCHED WAIFU & HUSBANDO GACHA ---
 async def _pull_anilist_char():
     page = random.randint(1, 150)
     gql = """
     query ($page: Int) {
       Page(page: $page, perPage: 10) {
         characters(sort: FAVOURITES_DESC) {
-          id
           name { full }
           gender
           favourites
@@ -204,16 +211,20 @@ async def _pull_anilist_char():
       }
     }
     """
-    async with aiohttp.ClientSession() as session:
-        async with session.post("https://graphql.anilist.co", json={"query": gql, "variables": {"page": page}}, timeout=12) as resp:
-            res = await resp.json()
-    chars = res.get("data", {}).get("Page", {}).get("characters", [])
-    return random.choice(chars) if chars else None
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post("https://graphql.anilist.co", json={"query": gql, "variables": {"page": page}}, timeout=12) as resp:
+                res = await resp.json()
+        chars = res.get("data", {}).get("Page", {}).get("characters", [])
+        return random.choice(chars) if chars else None
+    except Exception:
+        return None
 
 
-@router.message(Command("gacha", "waifugacha"))
+@router.message(Command("gacha", "waifugacha", prefix="/!"))
 async def gacha_cmd(message: Message):
     global CARD_COUNTER
+    await message.bot.send_chat_action(message.chat.id, "upload_photo")
     char = await _pull_anilist_char()
     if not char:
         return await message.answer("❌ Gacha machine jammed! Try again~")
@@ -232,29 +243,32 @@ async def gacha_cmd(message: Message):
         anime = nodes[0]["title"].get("english") or nodes[0]["title"].get("romaji") or "Anime"
 
     url = char["image"]["large"]
-    await add_gacha_card(message.from_user.id, {"id": cid, "name": name, "rarity": rarity, "power": power, "url": url})
+    try:
+        await add_gacha_card(message.from_user.id, {"id": cid, "name": name, "rarity": rarity, "power": power, "url": url})
+    except Exception:
+        pass
 
     img_bytes = await fetch_bytes(url)
     card_img = generate_4k_anime_card(f"#{cid} {name}", f"{power} PWR", f"{tag} • {anime}", rarity, img_bytes)
     await message.answer_photo(
         photo=BufferedInputFile(card_img.getvalue(), filename="card.jpg"),
-        caption=f"🎰 **Gacha Pull!**\n\n🆔 `#{cid}` | **{name}** ({tag})\n📺 {anime}\n✨ Rarity: **{rarity}** | ⚡ `{power}`",
+        caption=f"🎰 Gacha Pull!\n\n🆔 #{cid} | {name} ({tag})\n📺 {anime}\n✨ Rarity: {rarity} | ⚡ {power}",
         parse_mode=None
     )
 
 
-@router.message(Command("collection"))
+@router.message(Command("collection", prefix="/!"))
 async def collection_cmd(message: Message):
     cards = await get_user_cards(message.from_user.id)
     if not cards:
         return await message.answer("📭 Your collection is empty! Use `/gacha` to pull!")
-    lines = [f"🃏 **{message.from_user.full_name}'s Collection ({len(cards)} Cards)**\n"]
+    lines = [f"🃏 {message.from_user.full_name}'s Collection ({len(cards)} Cards)\n"]
     for c in cards[:15]:
         lines.append(f"• #{c['card_id']} {c['card_name']} ({c['rarity']})")
     await message.answer("\n".join(lines), parse_mode=None)
 
 
-@router.message(Command("view"))
+@router.message(Command("view", prefix="/!"))
 async def view_card_cmd(message: Message):
     parts = message.text.split(None, 1)
     if len(parts) < 2:
@@ -274,7 +288,7 @@ async def view_card_cmd(message: Message):
 
 
 # --- 5. IDENTITY & LOVE ---
-@router.message(Command("gender"))
+@router.message(Command("gender", prefix="/!"))
 async def set_gender(message: Message):
     parts = message.text.split()
     if len(parts) < 2 or parts[1].lower() not in ("male", "female"):
@@ -283,7 +297,7 @@ async def set_gender(message: Message):
     await message.answer(f"✅ Gender set to **{parts[1].capitalize()}**!")
 
 
-@router.message(Command("bio"))
+@router.message(Command("bio", prefix="/!"))
 async def set_bio(message: Message):
     parts = message.text.split(None, 1)
     if len(parts) < 2:
@@ -292,7 +306,7 @@ async def set_bio(message: Message):
     await message.answer("📝 Bio updated!")
 
 
-@router.message(Command("mybio"))
+@router.message(Command("mybio", prefix="/!"))
 async def get_bio(message: Message):
     target = message.reply_to_message.from_user if message.reply_to_message else message.from_user
     g = USER_GENDER.get(target.id, "Not set").capitalize()
@@ -300,11 +314,11 @@ async def get_bio(message: Message):
     await message.answer(f"👤 {target.full_name} ({g})\n\n📝 {bio}", parse_mode=None)
 
 
-@router.message(Command("lovecalc"))
+@router.message(Command("lovecalc", prefix="/!"))
 async def love_cmd(message: Message):
     if not message.reply_to_message:
         return await message.answer("Reply to someone!")
     await message.answer(
-        f"💘 {message.from_user.full_name} ❤️ {message.reply_to_message.from_user.full_name} = **{random.randint(1, 100)}%**",
+        f"💘 {message.from_user.full_name} ❤️ {message.reply_to_message.from_user.full_name} = {random.randint(1, 100)}%",
         parse_mode=None
     )
