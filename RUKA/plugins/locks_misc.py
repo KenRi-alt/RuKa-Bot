@@ -1,4 +1,5 @@
 import re, time, uuid
+from aiogram.dispatcher.event.bases import SkipHandler
 from io import BytesIO
 from aiogram import Router, F
 from aiogram.filters import Command
@@ -491,5 +492,6 @@ async def security_watcher(message: Message):
         or ("cyrillic" in locks and re.search(r"[\u0400-\u04FF]", txt))
     )
     if del_it:
+raise SkipHandler()
         try: await message.delete()
         except Exception: pass
