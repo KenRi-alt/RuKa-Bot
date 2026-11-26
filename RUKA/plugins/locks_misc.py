@@ -1,55 +1,3 @@
-import json
-from io import BytesIO
-from aiogram import Router
-from aiogram.filters import Command
-from aiogram.types import Message, BufferedInputFile
-from RUKA import CONFIG
-from RUKA.utils.db import get_pool
-
-router = Router()
-
-
-@router.message(Command("backup", prefix="/!"))
-async def backup_postgres(message: Message):
-    if message.from_user.id not in (CONFIG.OWNER_LIST or []):
-        return await message.answer("❌ Owner only!")
-
-    msg = await message.answer("⏳ Exporting PostgreSQL backup...")
-    try:
-        pool = await get_pool()
-        backup_data = {}
-        async with pool.acquire() as conn:
-            tables = await conn.fetch(
-                "SELECT tablename FROM pg_tables WHERE schemaname='public'"
-            )
-            for t in tables:
-                tname = t["tablename"]
-                rows = await conn.fetch(f'SELECT * FROM "{tname}"')
-                backup_data[tname] = [
-                    {k: (str(v) if not isinstance(v, (int, float, bool, str, type(None))) else v) for k, v in dict(r).items()}
-                    for r in rows
-                ]
-
-        raw = json.dumps(backup_data, indent=2).encode("utf-8")
-        doc = BufferedInputFile(raw, filename="ruka_backup.json")
-
-        if CONFIG.LOGS_CHANNEL:
-            try:
-                await message.bot.send_document(CONFIG.LOGS_CHANNEL, document=doc, caption="📦 **Ruka Database Backup**")
-            except Exception:
-                pass
-        for oid in (CONFIG.OWNER_LIST or []):
-            try:
-                await message.bot.send_document(oid, document=BufferedInputFile(raw, filename="ruka_backup.json"), caption="📦 **Ruka Database Backup**")
-            except Exception:
-                pass
-
-        await msg.edit_text("✅ Backup exported and sent to `LOGS_CHANNEL` & `OWNER_LIST`!")
-    except Exception as e:
-        await msg.edit_text(f"❌ Backup error: `{e}`")
-
-2. Replace RUKA/plugins/locks_misc.py (Ruka's Pro Group Security & Management)
-
 import re, time, uuid
 from io import BytesIO
 from aiogram import Router, F
@@ -94,7 +42,7 @@ async def _punish(bot, cid: int, uid: int, mode: str):
         await bot.restrict_chat_member(cid, uid, ChatPermissions(can_send_messages=False))
 
 
-# --- 1. Warnings (/warn, /dwarn, /swarn, /warns, /rmwarn, /resetwarn, /warnlimit, /warnmode) ---
+# --- 1. Warnings ---
 @router.message(Command("warn", "dwarn", "swarn", prefix="/!"), F.chat.type.in_({"group", "supergroup"}))
 async def warn_cmd(message: Message):
     if not await _is_adm(message) or not message.reply_to_message:
@@ -245,7 +193,7 @@ async def lock_cmd(message: Message):
         return await message.answer(f"Usage: `/lock <type>`\nTypes: `{', '.join(sorted(LOCK_TYPES))}`")
     lt = p[1].lower()
     if lt not in LOCK_TYPES:
-        return await message.answer(f"Invalid type! Use `/locktypes` to see all.")
+        return await message.answer("Invalid type! Use `/locktypes` to see all.")
     un = message.text[1:].lower().startswith("un")
     await set_lock(message.chat.id, lt, not un)
     await message.answer(f"{'🔓 Unlocked' if un else '🔒 Locked'} **{lt}**!")
@@ -545,6 +493,3 @@ async def security_watcher(message: Message):
     if del_it:
         try: await message.delete()
         except Exception: pass
-
-Push both database.py and locks_misc.py to GitHub—your bot is now a complete,
-Rose-beating powerhouse!
