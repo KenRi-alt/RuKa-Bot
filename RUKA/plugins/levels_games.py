@@ -1,3 +1,4 @@
+from aiogram.dispatcher.event.bases import SkipHandler
 import html, time, random, asyncio, aiohttp
 from io import BytesIO
 from aiogram import Router, F
@@ -326,5 +327,5 @@ async def games_cb(query: CallbackQuery):
 @router.message(F.chat.type.in_({"group", "supergroup"}), F.text, ~F.text.startswith(("/", "!")))
 async def xp_listener(message: Message):
     if not message.from_user or message.from_user.is_bot or message.text.startswith(("/", "!")):
-        return
+        raise SkipHandler()
     await update_user_stats(message.from_user.id, coins=2, xp=random.randint(5, 10))
