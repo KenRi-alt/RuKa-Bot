@@ -323,7 +323,7 @@ async def games_cb(query: CallbackQuery):
     await query.answer()
 
 
-@router.message(F.chat.type.in_({"group", "supergroup"}), F.text)
+@router.message(F.chat.type.in_({"group", "supergroup"}), F.text, ~F.text.startswith(("/", "!")))
 async def xp_listener(message: Message):
     if not message.from_user or message.from_user.is_bot or message.text.startswith(("/", "!")):
         return
