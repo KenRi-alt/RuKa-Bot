@@ -9,6 +9,7 @@ from aiogram.types import (
     BufferedInputFile,
 )
 from RUKA.utils.image_gen import generate_4k_welcome
+from RUKA.utils.db import get_chat_settings
 
 router = Router()
 
@@ -39,15 +40,15 @@ def get_help_buttons() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(text="🔨 Moderation", callback_data="help_admin"),
-            InlineKeyboardButton(text="🛡️ Security & Warns", callback_data="help_locks"),
+            InlineKeyboardButton(text="🛡️ Security & Feds", callback_data="help_locks"),
         ],
         [
-            InlineKeyboardButton(text="🎮 Levels & Games", callback_data="help_games"),
-            InlineKeyboardButton(text="🌸 Anime & Fun", callback_data="help_anime"),
+            InlineKeyboardButton(text="🎮 Economy & Games", callback_data="help_games"),
+            InlineKeyboardButton(text="🌸 Social & Gacha", callback_data="help_social"),
         ],
         [
-            InlineKeyboardButton(text="🤖 AI & Utility", callback_data="help_ai"),
-            InlineKeyboardButton(text="👑 Owner", callback_data="help_owner"),
+            InlineKeyboardButton(text="🎬 Anime & AI", callback_data="help_ai"),
+            InlineKeyboardButton(text="⚙️ Utilities & Staff", callback_data="help_misc"),
         ],
         [
             InlineKeyboardButton(text="🏠 Back to Start", callback_data="help_home"),
@@ -55,6 +56,7 @@ def get_help_buttons() -> InlineKeyboardMarkup:
     ])
 
 
+# --- /start Command ---
 @router.message(CommandStart())
 async def start_cmd(message: Message):
     user = message.from_user
@@ -67,12 +69,12 @@ async def start_cmd(message: Message):
         photo=photo_to_send,
         caption=(
             f"💓 **Kon'nichiwa, {user.full_name}!**\n\n"
-            f"I'm **Ruka Sarashina**—and I'm here to keep your group lively, safe, and full of heart! 🌸\n\n"
-            f"✨ **How I can help:**\n"
-            f"• **Smart Moderation** — Keep troublemakers out effortlessly\n"
-            f"• **Warm Welcomes** — Greet every new member in style\n"
-            f"• **Anime, AI & Games** — Keep your community active and entertained\n\n"
-            f"Tap **Help & Commands** below to see everything I can do."
+            f"I'm **Ruka Sarashina**—your energetic, dependable companion for keeping groups safe, active, and unforgettable! 🌸\n\n"
+            f"✨ **What I bring to your community:**\n"
+            f"• **Pro-Grade Moderation** — Anti-Raid, Federations, Approvals & Smart Logs\n"
+            f"• **Custom Welcomes** — Warm, personalized greeting cards for new members\n"
+            f"• **Social, Gacha & AI** — Marriages, Family Trees, Boss Raids & smart conversations\n\n"
+            f"All commands work with both `/` and `!`. Tap **Help & Commands** below to begin."
         ),
         reply_markup=get_start_buttons(me.username),
     )
@@ -80,7 +82,8 @@ async def start_cmd(message: Message):
         PHOTO_CACHE["ruka_main"] = sent.photo[-1].file_id
 
 
-@router.message(Command("help"))
+# --- /help Command ---
+@router.message(Command("help", prefix="/!"))
 async def help_cmd(message: Message):
     photo_to_send = PHOTO_CACHE.get("ruka_main", RUKA_PIC)
     sent = await message.answer_photo(
@@ -95,8 +98,16 @@ async def help_cmd(message: Message):
         PHOTO_CACHE["ruka_main"] = sent.photo[-1].file_id
 
 
+# --- Auto-Welcome New Group Members (Respects /settings toggle) ---
 @router.message(F.new_chat_members)
 async def welcome_new_member(message: Message):
+    try:
+        s = await get_chat_settings(message.chat.id)
+        if not s.get("welcome", True) or s.get("antiraid", False):
+            return
+    except Exception:
+        pass
+
     for user in message.new_chat_members:
         if user.is_bot:
             continue
@@ -126,12 +137,13 @@ async def welcome_new_member(message: Message):
             photo=photo_file,
             caption=(
                 f"🌸 **Welcome to {message.chat.title}, {user.full_name}!**\n\n"
-                f"We're so happy you're here! Please take a moment to check the group rules and enjoy your stay. 💓"
+                f"We're so glad you joined us! Take a moment to check the group rules and say hello. 💓"
             ),
             reply_markup=buttons,
         )
 
 
+# --- Callback Handlers ---
 @router.callback_query(F.data.startswith(("help_", "about_ruka", "rules_btn")))
 async def help_callbacks(query: CallbackQuery):
     data = query.data
@@ -141,8 +153,10 @@ async def help_callbacks(query: CallbackQuery):
 
     if data == "about_ruka":
         return await query.answer(
-            "💓 Ruka Sarashina — Your energetic anime group companion.\n"
-            "👨‍💻 Developer: @Nocis_creed",
+            "💓 Ruka Sarashina\n"
+            "Your intelligent anime group companion.\n\n"
+            "👨‍💻 Creator: @Nocis_creed\n"
+            "🛠️ Co-Creator: @dont_try_to_copy_mee",
             show_alert=True
         )
 
@@ -163,8 +177,8 @@ async def help_callbacks(query: CallbackQuery):
         await query.message.edit_caption(
             caption=(
                 f"💓 **Kon'nichiwa!**\n\n"
-                f"I'm **Ruka Sarashina**—and I'm here to keep your group lively, safe, and full of heart! 🌸\n\n"
-                f"Tap **Help & Commands** below to see everything I can do."
+                f"I'm **Ruka Sarashina**—your energetic, dependable companion for keeping groups safe, active, and unforgettable! 🌸\n\n"
+                f"Tap **Help & Commands** below to explore."
             ),
             reply_markup=get_start_buttons(me.username)
         )
@@ -172,18 +186,16 @@ async def help_callbacks(query: CallbackQuery):
     elif data == "help_admin":
         await query.message.edit_caption(
             caption=(
-                "🔨 **Moderation Commands**\n\n"
+                "🔨 **Moderation Commands** *(Group)*\n\n"
                 "• `/adminpanel` — Open the interactive admin menu.\n"
-                "• `/ban` | `/unban` — Reply to a user or pass their ID.\n"
-                "• `/tban <time>` — Temp-ban a user (e.g. `/tban 1h`, `2d`).\n"
+                "• `/ban` | `/unban` | `/tban <1h/2d>` — Ban or temp-ban users.\n"
                 "• `/dban` | `/sban` — Delete message & ban, or silent ban.\n"
                 "• `/kick` | `/dkick` | `/skick` — Remove a user from the chat.\n"
-                "• `/mute` | `/unmute` | `/tmute <time>` — Restrict messaging.\n"
-                "• `/purge` | `/del` — Reply to a message to bulk-delete or delete.\n"
+                "• `/mute` | `/unmute` | `/tmute <30m>` — Restrict messaging.\n"
+                "• `/purge` | `/del` — Reply to bulk-delete or remove a message.\n"
                 "• `/pin` | `/unpin` | `/unpinall` — Manage pinned messages.\n"
                 "• `/promote` | `/demote` | `/settitle <title>` — Manage admins.\n"
-                "• `/slowmode <sec>` — Set slowmode delay (`0` to disable).\n"
-                "• `/invitelink` | `/admins` — Get invite link or list admins."
+                "• `/slowmode <sec>` | `/invitelink` | `/admins` — Group controls."
             ),
             reply_markup=back_btn
         )
@@ -191,15 +203,16 @@ async def help_callbacks(query: CallbackQuery):
     elif data == "help_locks":
         await query.message.edit_caption(
             caption=(
-                "🛡️ **Security, Warns & Filters**\n\n"
-                "• `/settings` — Toggle Captcha, Welcome, Anti-Link & Night Mode.\n"
-                "• `/warn` | `/unwarn` | `/warns` | `/resetwarns` — Manage user warnings.\n"
-                "• `/setwarnlimit <num>` — Set max warns before auto-ban.\n"
-                "• `/antiflood <num>` — Auto-mute spammers (`0` to disable).\n"
-                "• `/blacklist <word>` | `/unblacklist <word>` — Block specific words.\n"
-                "• `/lock <type>` | `/unlock <type>` — Lock `links`, `stickers`, `forwards`, `media`, or `all`.\n"
-                "• `/nightmode on|off` — Lock media, stickers & links.\n"
-                "• `/filter <word> <reply>` | `/stop <word>` — Auto-reply to keywords."
+                "🛡️ **Security, Warns & Federations** *(Group)*\n\n"
+                "• `/settings` — Toggle CAPTCHA, Anti-Raid, Clean Service & more.\n"
+                "• `/approve` | `/unapprove` | `/approved` — Exempt trusted users.\n"
+                "• `/report` or `@admin` — Report rule-breakers with quick-action buttons.\n"
+                "• `/setlog <id>` | `/unsetlog` | `/logchannel` — Group audit logs.\n"
+                "• `/newfed <name>` | `/joinfed <id>` | `/fban` | `/funban` — Federations.\n"
+                "• `/warn` | `/unwarn` | `/warns` | `/setwarnlimit <num>` — Warnings.\n"
+                "• `/lock <type>` | `/unlock <type>` | `/nightmode on|off`\n"
+                "• `/antiflood <num>` | `/blacklist <word>` | `/filter <word> <reply>`\n"
+                "• `/disable <cmd>` | `/enable <cmd>` | `/disabled`"
             ),
             reply_markup=back_btn
         )
@@ -208,28 +221,29 @@ async def help_callbacks(query: CallbackQuery):
         await query.message.edit_caption(
             caption=(
                 "🎮 **Levels, Economy & Games**\n\n"
-                "• `/rank` (`/level`) — View your profile card, rank & XP.\n"
-                "• `/leaderboard` (`/lb`) — See the top active members.\n"
-                "• `/boss` — Spawn a group Boss Raid to fight together!\n"
-                "• `/daily` | `/bal` — Claim daily coins & check balance.\n"
-                "• `/give <amt>` | `/rob` | `/bet <amt>` — Trade, steal, or bet coins.\n"
-                "• `/rps` | `/trivia` | `/guess` — Interactive button games.\n"
-                "• `/duel` — Reply to a friend to challenge them.\n"
-                "• `/slot` | `/dart` | `/basket` | `/bowl` — Mini-games."
+                "• `/rank` (`/level`) — View your profile card, rank & XP *(Group)*.\n"
+                "• `/leaderboard` (`/lb`) — Top active members *(Group)*.\n"
+                "• `/daily` | `/bal` — Claim daily coins & check your wallet.\n"
+                "• `/shop` — Buy weapons, armor & items with coins.\n"
+                "• `/bet <amount>` — Gamble your coins to multiply them.\n"
+                "• `/boss` — Spawn a group Boss Raid to fight together *(Group)*.\n"
+                "• `/duel` — Reply to challenge a friend *(Group)*.\n"
+                "• `/rps` | `/trivia` | `/guess` | `/slot` | `/dart` | `/basket`"
             ),
             reply_markup=back_btn
         )
 
-    elif data == "help_anime":
+    elif data == "help_social":
         await query.message.edit_caption(
             caption=(
-                "🌸 **Anime, Gacha & Fun**\n\n"
-                "• `/anime <name>` — Search anime with score & synopsis.\n"
-                "• `/topanime` | `/airing <name>` — Trending & episode countdowns.\n"
-                "• `/gacha` — Pull rare Waifu cards!\n"
-                "• `/collection` | `/view <id/name>` — View your pulled cards.\n"
-                "• `/ship` | `/8ball` | `/truth` | `/dare` | `/quote` — Party fun.\n"
-                "• **Reactions:** `/waifu`, `/neko`, `/hug`, `/pat`, `/slap`, `/kiss`, `/cuddle`, `/poke`, `/wink`, `/baka`, `/blush`, `/dance`, `/smile` & more!"
+                "🌸 **Marriage, Family & Gacha**\n\n"
+                "• `/marry` | `/divorce` | `/partner` — Propose & manage bonds.\n"
+                "• `/adopt` | `/sibling` | `/disown` | `/family` | `/tree` — Family lineage.\n"
+                "• `/gacha` — Pull rare Waifu & Husbando cards!\n"
+                "• `/collection` | `/view <id/name>` — Browse your pulled cards.\n"
+                "• `/gender <male/female>` | `/bio <text>` | `/mybio` — Your profile.\n"
+                "• `/lovecalc` | `/couple` *(Group)* | `/simprate` | `/iq` | `/waifurate`\n"
+                "• **Reactions:** `/hug`, `/kiss`, `/slap`, `/pat`, `/cuddle`, `/poke`, `/cringe`, `/bonk`, `/blush`, `/dance`, `/yeet` & more!"
             ),
             reply_markup=back_btn
         )
@@ -237,29 +251,27 @@ async def help_callbacks(query: CallbackQuery):
     elif data == "help_ai":
         await query.message.edit_caption(
             caption=(
-                "🤖 **Ruka AI & Utilities**\n\n"
-                "• `/ruka <msg>` (`/ai`, `/ask`) — Chat with Ruka.\n"
+                "🎬 **Anime & Ruka AI**\n\n"
+                "• `/ruka <msg>` (`/ai`, `/ask`) — Chat with Ruka (or just say `Ruka`!).\n"
                 "• `/imagine <prompt>` — Generate custom anime art.\n"
-                "• `/clearai` — Reset your AI conversation memory.\n"
-                "• `/roast` | `/compliment` — Reply to a user.\n"
-                "• `/summarize` | `/translate <lang>` — Reply to any text.\n"
-                "• `/animeidea` — Get a custom anime plot.\n"
-                "• `/connect <id>` | `/disconnect` — Manage your group from PM.\n"
-                "• `/setrules` | `/rules` | `/save` | `/get` | `/notes`\n"
-                "• `/info` | `/id` | `/ping` | `/afk <reason>`"
+                "• `/roast` | `/compliment` — Context-aware roasts & compliments.\n"
+                "• `/emojify` | `/summarize` | `/translate <lang>` | `/animeidea`\n"
+                "• `/clearai` — Reset your conversation memory.\n"
+                "• `/anime <name>` | `/manga <name>` | `/animechar <name>`\n"
+                "• `/topanime` | `/airing <name>` | `/randomanime` | `/quote`"
             ),
             reply_markup=back_btn
         )
 
-    elif data == "help_owner":
+    elif data == "help_misc":
         await query.message.edit_caption(
             caption=(
-                "👑 **Owner & Sudo Commands**\n\n"
-                "• `/stats` | `/sudolist` — System uptime & staff list.\n"
-                "• `/addsudo` | `/rmsudo` — Manage sudo access.\n"
-                "• `/gban` | `/ungban` — Global ban/unban.\n"
-                "• `/send <chat_id> <text>` | `/leavechat <id>`\n"
-                "• `/eval <code>` | `/sh <cmd>` | `/restart` | `/backup`"
+                "⚙️ **Utilities & Staff**\n\n"
+                "• `/connect <id>` | `/disconnect` | `/connection` — Manage from PM.\n"
+                "• `/setrules` | `/rules` | `/save <name> <text>` | `/get <name>` | `/notes`\n"
+                "• `/info` | `/id` | `/ping` | `/afk <reason>`\n"
+                "• `/poll Q | A | B` *(Group)* | `/choose A | B` | `/decide`\n"
+                "• **Staff:** `/stats`, `/sudolist`, `/addsudo`, `/rmsudo`, `/gban`, `/ungban`, `/send`, `/eval`, `/sh`, `/restart`, `/backup`"
             ),
             reply_markup=back_btn
         )
