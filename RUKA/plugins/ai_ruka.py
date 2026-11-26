@@ -4,15 +4,17 @@ import aiohttp
 from aiogram import Router, F
 from aiogram.filters import Command
 from aiogram.types import Message, BufferedInputFile
+from RUKA import LOGGER
 
 router = Router()
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "") or os.getenv("GROK_API_KEY", "")
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 GROQ_MODELS = [
-    "openai/gpt-oss-120b",
     "openai/gpt-oss-20b",
-    "qwen/qwen3.8-27b",
+    "openai/gpt-oss-120b",
+    "llama-3.1-8b-instant",
+    "llama-3.3-70b-versatile",
 ]
 
 SYSTEM_PROMPT = (
@@ -24,7 +26,7 @@ SYSTEM_PROMPT = (
 )
 
 USER_MEMORY: dict[int, list[dict]] = {}
-CHAT_FEED: dict[int, list[tuple[int, str, str]]] = {}  # chat_id -> [(user_id, name, text)]
+CHAT_FEED: dict[int, list[tuple[int, str, str]]] = {}
 
 
 def _get_recent_context(chat_id: int, target_user_id: int = None) -> str:
@@ -41,12 +43,12 @@ async def ask_ruka_ai(user_id: int, prompt: str, chat_id: int = None, use_memory
     sys_content = SYSTEM_PROMPT + (f"\n\nRecent group chat context:\n{ctx}" if ctx else "")
     messages = [{"role": "system", "content": sys_content}] + history + [{"role": "user", "content": prompt}]
 
-    # 1. Try Groq Free-Tier Models
+    # 1. Try Groq API
     if GROQ_API_KEY:
         headers = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
         async with aiohttp.ClientSession() as session:
             for model in GROQ_MODELS:
-                payload = {"model": model, "messages": messages, "temperature": 0.8, "max_tokens": 600}
+                payload = {"model": model, "messages": messages, "temperature": 0.8, "max_completion_tokens": 500}
                 try:
                     async with session.post(GROQ_URL, headers=headers, json=payload, timeout=20) as resp:
                         if resp.status == 200:
@@ -58,25 +60,36 @@ async def ask_ruka_ai(user_id: int, prompt: str, chat_id: int = None, use_memory
                                     {"role": "assistant", "content": reply}
                                 ])[-10:]
                             return reply
-                except Exception:
-                    continue
+                        else:
+                            err_txt = await resp.text()
+                            LOGGER.warning(f"[AI] Groq {model} HTTP {resp.status}: {err_txt[:150]}")
+                except Exception as e:
+                    LOGGER.warning(f"[AI] Groq {model} error: {e}")
 
-    # 2. Fallback: Pollinations AI
-    full_prompt = f"{SYSTEM_PROMPT}\nUser: {prompt}\nRuka:"
-    url = f"https://text.pollinations.ai/{urllib.parse.quote(full_prompt)}"
+    # 2. Fallback: Pollinations POST (handles long context cleanly)
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.get(url, timeout=20) as resp:
+            async with session.post(
+                "https://text.pollinations.ai/",
+                json={"messages": messages, "model": "openai"},
+                timeout=20
+            ) as resp:
                 if resp.status == 200:
-                    return (await resp.text()).strip()
-    except Exception:
-        pass
+                    reply = (await resp.text()).strip()
+                    if use_memory:
+                        USER_MEMORY[user_id] = (history + [
+                            {"role": "user", "content": prompt},
+                            {"role": "assistant", "content": reply}
+                        ])[-10:]
+                    return reply
+                LOGGER.warning(f"[AI] Pollinations HTTP {resp.status}")
+    except Exception as e:
+        LOGGER.warning(f"[AI] Pollinations error: {e}")
 
     return "Eh?! My neural link glitched for a second—try again~ 💫"
 
 
-# --- 1. /ai, /ask, /ruka ---
-@router.message(Command("ai", "ask", "ruka"))
+@router.message(Command("ai", "ask", "ruka", prefix="/!"))
 async def ruka_ai_cmd(message: Message):
     parts = message.text.split(None, 1)
     if len(parts) < 2:
@@ -86,8 +99,7 @@ async def ruka_ai_cmd(message: Message):
     await message.answer(f"💓 **Ruka:** {reply}", disable_web_page_preview=True)
 
 
-# --- 2. /roast (Checks Previous Messages of Target User!) ---
-@router.message(Command("roast"))
+@router.message(Command("roast", prefix="/!"))
 async def roast_cmd(message: Message):
     target = message.reply_to_message.from_user if message.reply_to_message and message.reply_to_message.from_user else message.from_user
     recent = _get_recent_context(message.chat.id, target_user_id=target.id)
@@ -100,8 +112,7 @@ async def roast_cmd(message: Message):
     await message.answer(f"🔥 {reply}")
 
 
-# --- 3. /compliment ---
-@router.message(Command("compliment"))
+@router.message(Command("compliment", prefix="/!"))
 async def compliment_cmd(message: Message):
     target = message.reply_to_message.from_user if message.reply_to_message and message.reply_to_message.from_user else message.from_user
     await message.bot.send_chat_action(message.chat.id, "typing")
@@ -109,8 +120,7 @@ async def compliment_cmd(message: Message):
     await message.answer(f"🌸 {reply}")
 
 
-# --- 4. /emojify ---
-@router.message(Command("emojify"))
+@router.message(Command("emojify", prefix="/!"))
 async def emojify_cmd(message: Message):
     text = message.reply_to_message.text if message.reply_to_message and message.reply_to_message.text else (message.text.split(None, 1)[1] if len(message.text.split()) > 1 else None)
     if not text:
@@ -120,8 +130,7 @@ async def emojify_cmd(message: Message):
     await message.answer(reply)
 
 
-# --- 5. /summarize ---
-@router.message(Command("summarize"))
+@router.message(Command("summarize", prefix="/!"))
 async def summarize_cmd(message: Message):
     if not message.reply_to_message or not message.reply_to_message.text:
         return await message.answer("Reply to a long message to summarize it!")
@@ -130,8 +139,7 @@ async def summarize_cmd(message: Message):
     await message.answer(f"📝 **Ruka's Summary:**\n{reply}")
 
 
-# --- 6. /translate ---
-@router.message(Command("translate"))
+@router.message(Command("translate", prefix="/!"))
 async def translate_cmd(message: Message):
     if not message.reply_to_message or not message.reply_to_message.text:
         return await message.answer("Reply to a message with `/translate <language>`.")
@@ -142,16 +150,14 @@ async def translate_cmd(message: Message):
     await message.answer(f"🌐 **Translated ({lang}):**\n{reply}")
 
 
-# --- 7. /animeidea ---
-@router.message(Command("animeidea"))
+@router.message(Command("animeidea", prefix="/!"))
 async def anime_idea_cmd(message: Message):
     await message.bot.send_chat_action(message.chat.id, "typing")
     reply = await ask_ruka_ai(message.from_user.id, f"Create an exciting 3-sentence anime plot where {message.from_user.first_name} is the main character and Ruka is their partner.", use_memory=False)
     await message.answer(f"🎬 **Your Anime Plot:**\n{reply}")
 
 
-# --- 8. /imagine ---
-@router.message(Command("imagine"))
+@router.message(Command("imagine", prefix="/!"))
 async def imagine_cmd(message: Message):
     parts = message.text.split(None, 1)
     if len(parts) < 2:
@@ -169,29 +175,25 @@ async def imagine_cmd(message: Message):
     await message.answer("❌ Couldn't generate that image right now!")
 
 
-# --- 9. /clearai ---
-@router.message(Command("clearai"))
+@router.message(Command("clearai", prefix="/!"))
 async def clear_ai_memory(message: Message):
     USER_MEMORY.pop(message.from_user.id, None)
     await message.answer("🧹 Cleared our neural memory! Let's start fresh~ 💓")
 
 
-# --- 10. Neuro-Linked Watcher (Records Chat + Replies to "Ruka" & Replies to Ruka's Images/Messages!) ---
 @router.message(F.text | F.caption)
 async def neuro_chat_watcher(message: Message):
     if not message.from_user or message.from_user.is_bot:
         return
     text = message.text or message.caption or ""
-    if text.startswith("/"):
+    if text.startswith(("/", "!")):
         return
 
-    # Record message into group feed for context & smart roasts
     feed = CHAT_FEED.setdefault(message.chat.id, [])
     feed.append((message.from_user.id, message.from_user.first_name, text))
     if len(feed) > 20:
         CHAT_FEED[message.chat.id] = feed[-20:]
 
-    # Check if user said "ruka" OR replied to any of Ruka's messages/images
     me = await message.bot.get_me()
     replied_to_ruka = (
         message.reply_to_message
@@ -201,7 +203,6 @@ async def neuro_chat_watcher(message: Message):
     mentioned_ruka = "ruka" in text.lower()
 
     if mentioned_ruka or replied_to_ruka or message.chat.type == "private":
-        # If replying to Ruka's image/caption, include what Ruka's image caption was!
         extra_ctx = ""
         if replied_to_ruka:
             prev = message.reply_to_message.caption or message.reply_to_message.text or "[an image]"
