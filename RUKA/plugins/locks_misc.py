@@ -450,7 +450,7 @@ async def security_watcher(message: Message):
                 await message.reply(rep, parse_mode=None); break
 
     if await _is_adm(message) or await is_approved(cid, uid):
-        return
+        raise SkipHandler()
 
     s = await get_chat_settings(cid)
     if s.get("cleancommand") and txt.startswith(("/", "!")):
