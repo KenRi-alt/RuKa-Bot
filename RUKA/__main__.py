@@ -22,11 +22,13 @@ async def keep_alive():
 
 
 async def main():
-    # 1. Pre-warm PostgreSQL connection pool in RAM for instant responses
+    # 1. Pre-warm PostgreSQL connection pool in RAM
+    db_status = "✅ Connected"
     try:
         await get_pool()
         LOGGER.info("[DB] PostgreSQL pool pre-warmed in RAM!")
     except Exception as e:
+        db_status = f"⚠️ {e}"
         LOGGER.warning(f"[DB] Pre-warm skipped: {e}")
 
     bot = Bot(
@@ -64,18 +66,25 @@ async def main():
     asyncio.create_task(keep_alive())
 
     LOGGER.info("Bot Online (aiogram 3 - High Speed & Anti-Sleep Active!)")
-    if CONFIG.SUPPORT_CHAT_ID:
-        try:
-            await bot.send_message(
-                CONFIG.SUPPORT_CHAT_ID,
-                "💓 **Ruka Sarashina is Online!**\n⚡ Speed & Anti-Sleep systems active."
-            )
-        except Exception as err:
-            LOGGER.info(f"Could not notify support chat: {err}")
+
+    # 4. Notify LOGS_CHANNEL and SUPPORT_CHAT_ID
+    startup_msg = (
+        "💓 **Ruka Sarashina is Online!**\n\n"
+        f"• **Database:** `{db_status}`\n"
+        "• **RAM Cache & Anti-Sleep:** `Active ⚡`"
+    )
+    notified = set()
+    for chat_id in (CONFIG.LOGS_CHANNEL, CONFIG.SUPPORT_CHAT_ID):
+        if chat_id and chat_id not in notified:
+            notified.add(chat_id)
+            try:
+                await bot.send_message(chat_id, startup_msg)
+            except Exception as err:
+                LOGGER.info(f"Could not notify {chat_id}: {err}")
 
     await bot.delete_webhook(drop_pending_updates=True)
 
-    # 4. Auto-recover polling loop so the bot never freezes or dies
+    # 5. Auto-recover polling loop
     while True:
         try:
             await dp.start_polling(bot, polling_timeout=30)
