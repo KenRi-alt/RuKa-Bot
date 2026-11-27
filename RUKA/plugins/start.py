@@ -15,6 +15,8 @@ from RUKA.utils.db import get_chat_settings
 router = Router()
 
 RUKA_PIC = "https://ganga--link--ghhzdp9sv8hk.code.run/i/s0s0y8txhk.jpg"
+UPDATES_URL = "https://t.me/RukaSarashinaUpdates"
+SUPPORT_URL = "https://t.me/sup_ruka_bot"
 PHOTO_CACHE: dict[str, str] = {}
 
 
@@ -27,20 +29,20 @@ def _is_staff(uid: int) -> bool:
 
 
 def get_start_buttons(bot_username: str) -> InlineKeyboardMarkup:
-    updates_url = CONFIG.UPDATES_CHANNEL or "https://t.me/sup_ruka_bot"
     return InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(
                 text="➕ Add Ruka to Your Group",
-                url=f"https://t.me/{bot_username}?startgroup=true"
+                url=f"https://t.me/{bot_username}?startgroup=true",
+                style="success",
             )
         ],
         [
-            InlineKeyboardButton(text="📢 Updates Channel", url=updates_url),
-            InlineKeyboardButton(text="💬 Support Group", url="https://t.me/sup_ruka_bot"),
+            InlineKeyboardButton(text="📢 Updates Channel", url=UPDATES_URL, style="primary"),
+            InlineKeyboardButton(text="💬 Support Group", url=SUPPORT_URL, style="primary"),
         ],
         [
-            InlineKeyboardButton(text="💓 About Ruka", callback_data="about_ruka"),
+            InlineKeyboardButton(text="💓 About Ruka", callback_data="about_ruka", style="danger"),
         ],
     ])
 
@@ -48,28 +50,28 @@ def get_start_buttons(bot_username: str) -> InlineKeyboardMarkup:
 def get_help_buttons() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton(text="🔴 Moderation", callback_data="help_admin"),
-            InlineKeyboardButton(text="🟠 Warnings & Flood", callback_data="help_warns"),
+            InlineKeyboardButton(text="🔨 Moderation", callback_data="help_admin", style="danger"),
+            InlineKeyboardButton(text="⚠️ Warns & Flood", callback_data="help_warns", style="primary"),
         ],
         [
-            InlineKeyboardButton(text="🟡 Locks & Filters", callback_data="help_locks"),
-            InlineKeyboardButton(text="🔵 Security & Feds", callback_data="help_feds"),
+            InlineKeyboardButton(text="🔒 Locks & Filters", callback_data="help_locks", style="primary"),
+            InlineKeyboardButton(text="🛡️ Security & Feds", callback_data="help_feds", style="primary"),
         ],
         [
-            InlineKeyboardButton(text="🟣 Notes & Rules", callback_data="help_notes"),
-            InlineKeyboardButton(text="🟢 Economy & Shop", callback_data="help_econ"),
+            InlineKeyboardButton(text="📜 Notes & Rules", callback_data="help_notes", style="primary"),
+            InlineKeyboardButton(text="💎 Economy & Shop", callback_data="help_econ", style="success"),
         ],
         [
-            InlineKeyboardButton(text="⚔️ Bosses & Games", callback_data="help_games"),
-            InlineKeyboardButton(text="🌸 Marriage & Family", callback_data="help_family"),
+            InlineKeyboardButton(text="⚔️ Bosses & Games", callback_data="help_games", style="success"),
+            InlineKeyboardButton(text="🌸 Marriage & Family", callback_data="help_family", style="primary"),
         ],
         [
-            InlineKeyboardButton(text="💎 Gacha & Social", callback_data="help_gacha"),
-            InlineKeyboardButton(text="🎬 Anime & Ruka AI", callback_data="help_ai"),
+            InlineKeyboardButton(text="🎰 Gacha & Social", callback_data="help_gacha", style="primary"),
+            InlineKeyboardButton(text="🎬 Anime & Ruka AI", callback_data="help_ai", style="primary"),
         ],
         [
-            InlineKeyboardButton(text="⚙️ Connections & Misc", callback_data="help_misc"),
-            InlineKeyboardButton(text="❌ Close", callback_data="help_close"),
+            InlineKeyboardButton(text="⚙️ Connections & Misc", callback_data="help_misc", style="primary"),
+            InlineKeyboardButton(text="❌ Close Menu", callback_data="help_close", style="danger"),
         ],
     ])
 
@@ -87,11 +89,11 @@ async def start_cmd(message: Message):
         photo=photo,
         caption=(
             f"💓 **Kon'nichiwa, {user.full_name}!**\n\n"
-            f"My heart skips a beat every time I meet someone new—I'm **Ruka Sarashina**, "
-            f"your devoted guardian and anime companion for Telegram groups! 🌸\n\n"
-            f"Whether you need strict protection against spammers, warm welcomes for new members, "
-            f"or fun games, gacha, and smart conversations—I'll give your community my all!\n\n"
-            f"📖 Use **`/help`** anytime to explore all of my commands and features."
+            f"My heart starts racing every time I meet someone new—I'm **Ruka Sarashina**, "
+            f"your devoted guardian and lively anime companion for Telegram groups! 🌸\n\n"
+            f"I'll protect your community from spammers, welcome newcomers with custom cards, "
+            f"and keep your chat entertained with AI, games, gacha, and family trees.\n\n"
+            f"📖 Send **`/help`** anytime to explore all of my commands in detail!"
         ),
         reply_markup=get_start_buttons(me.username),
     )
@@ -107,8 +109,8 @@ async def help_cmd(message: Message):
         photo=photo,
         caption=(
             "📚 **Ruka's Command Guide**\n\n"
-            "All commands work with both `/` and `!`.\n"
-            "Select a category below for detailed usage and examples:"
+            "All commands can be used with `/` or `!`.\n"
+            "Select a module below to view detailed explanations and usage examples:"
         ),
         reply_markup=get_help_buttons(),
     )
@@ -123,24 +125,15 @@ async def dev_help_cmd(message: Message):
         return await message.answer("❌ You are not allowed to use this command.")
 
     await message.answer(
-        "👑 **Staff & Developer Command Suite**\n\n"
-        "**Control & Diagnostics:**\n"
-        "• `/ownerpanel` — Interactive God-Mode dashboard\n"
-        "• `/stats` | `/botinfo` | `/sysinfo` | `/apihealth`\n"
-        "• `/testdb` | `/dbstats` | `/pipcheck` | `/env`\n\n"
-        "**Bot Profile & Menu:**\n"
-        "• `/setbotcmds` | `/clearbotcmds`\n"
-        "• `/setbotname` | `/setbotdesc` | `/setbotshort`\n"
-        "• `/webhookinfo` | `/flushupdates`\n\n"
-        "**Hierarchy & Global Moderation:**\n"
-        "• `/sudolist` | `/addsudo` | `/rmsudo` | `/adddev` | `/rmdev`\n"
-        "• `/gban` | `/ungban` | `/gbanlist`\n"
-        "• `/send <chat_id> <text>` | `/leavechat <id>`\n\n"
-        "**Economy, DB & Execution:**\n"
-        "• `/addcoins` | `/rmcoins` | `/addxp` | `/resetuser`\n"
-        "• `/giveallcoins` | `/giveallxp` | `/toprich`\n"
-        "• `/sql <query>` | `/wipechat` | `/backup`\n"
-        "• `/eval <code>` | `/sh <cmd>` | `/restart`"
+        "👑 **Staff & Developer Suite**\n\n"
+        "✦ `/ownerpanel` — Open interactive diagnostics & toggles.\n"
+        "✦ `/broadcast <users|groups|all>` — Reply to broadcast globally.\n"
+        "✦ `/announce <text>` — Send an official notice to all groups.\n"
+        "✦ `/forcesub <@channel|off>` — Enforce channel join.\n"
+        "✦ `/maintenance <on|off> [reason]` — Toggle maintenance mode.\n"
+        "✦ `/send <chat_id> [text]` — Deliver text or replied media remotely.\n"
+        "✦ `/addcoins`, `/rmcoins`, `/addxp`, `/giveallcoins`, `/toprich`\n"
+        "✦ `/gban`, `/ungban`, `/botban`, `/botunban`, `/sql`, `/eval`, `/sh`, `/backup`, `/restart`"
     )
 
 
@@ -172,15 +165,15 @@ async def welcome_new_member(message: Message):
         img = generate_4k_welcome(user.first_name, message.chat.title or "Group", pfp_bytes)
         photo_file = BufferedInputFile(img.getvalue(), filename="welcome.jpg")
         buttons = InlineKeyboardMarkup(inline_keyboard=[[
-            InlineKeyboardButton(text="📜 Group Rules", callback_data="rules_btn"),
-            InlineKeyboardButton(text="💬 Support", url="https://t.me/sup_ruka_bot"),
+            InlineKeyboardButton(text="📜 Group Rules", callback_data="rules_btn", style="primary"),
+            InlineKeyboardButton(text="💬 Support", url=SUPPORT_URL, style="success"),
         ]])
 
         await message.answer_photo(
             photo=photo_file,
             caption=(
                 f"🌸 **Welcome to {message.chat.title}, {user.full_name}!**\n\n"
-                f"We're so happy to have you here! Please check the group rules and enjoy your stay. 💓"
+                f"We're thrilled to have you here! Take a moment to read the rules and say hi. 💓"
             ),
             reply_markup=buttons,
         )
@@ -191,7 +184,7 @@ async def welcome_new_member(message: Message):
 async def help_callbacks(query: CallbackQuery):
     data = query.data
     back_btn = InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text="🔙 Back to Menu", callback_data="help_main")
+        InlineKeyboardButton(text="⬅️ Back", callback_data="help_main", style="primary")
     ]])
 
     if data == "about_ruka":
@@ -204,137 +197,145 @@ async def help_callbacks(query: CallbackQuery):
         )
 
     if data == "rules_btn":
-        return await query.answer(
-            "📜 Be respectful, avoid spam, and listen to the group admins!",
-            show_alert=True
-        )
+        return await query.answer("📜 Be respectful, avoid spam, and listen to the group admins!", show_alert=True)
 
     if data == "help_close":
         return await query.message.delete()
 
     if data == "help_main":
         await query.message.edit_caption(
-            caption="📚 **Ruka's Command Guide**\n\nAll commands work with both `/` and `!`.\nSelect a category below:",
+            caption=(
+                "📚 **Ruka's Command Guide**\n\n"
+                "All commands can be used with `/` or `!`.\n"
+                "Select a module below to view detailed explanations and usage examples:"
+            ),
             reply_markup=get_help_buttons()
         )
         return await query.answer()
 
     pages = {
         "help_admin": (
-            "🔴 **Moderation Commands** *(Group Admins)*\n\n"
-            "• `/adminpanel` — Open the interactive admin menu.\n\n"
-            "• `/ban` | `/unban` — Ban or unban a user (reply or pass ID).\n"
-            "• `/tban <time>` — Temp-ban a user (e.g. `/tban 1h`, `2d`).\n"
-            "• `/dban` | `/sban` — Delete replied message & ban, or silent ban.\n\n"
-            "• `/kick` | `/dkick` | `/skick` — Kick a user from the chat.\n"
-            "• `/mute` | `/unmute` | `/tmute <time>` — Restrict messaging.\n"
-            "• `/dmute` | `/smute` — Delete & mute, or silent mute.\n\n"
-            "• `/purge` | `/del` — Reply to bulk-delete or remove a message.\n"
-            "• `/pin` | `/unpin` | `/unpinall` — Manage pinned messages.\n"
-            "• `/promote` | `/demote` | `/settitle <title>` — Manage admins.\n"
-            "• `/slowmode <sec>` | `/invitelink` | `/admins` — Group controls."
+            "✦ **Moderation Module** *(Group Admins)*\n\n"
+            "✧ `/adminpanel` — Open a quick interactive control menu for group actions.\n"
+            "✧ `/ban` — Permanently ban a user by replying to them or passing their ID.\n"
+            "✧ `/tban <time>` — Temporarily ban a user (Examples: `10m`, `2h`, `3d`).\n"
+            "✧ `/dban` / `/sban` — Delete the replied message and ban, or ban silently.\n"
+            "✧ `/unban` — Remove a ban so the user can rejoin.\n"
+            "✧ `/kick` / `/dkick` / `/skick` — Remove a user without banning them.\n"
+            "✧ `/mute` / `/tmute <time>` / `/unmute` — Stop or allow a user from sending messages.\n"
+            "✧ `/purge` / `/del` — Reply to a message to bulk-delete up to the current message, or delete one.\n"
+            "✧ `/pin` / `/unpin` / `/unpinall` — Manage pinned messages in your chat.\n"
+            "✧ `/promote` / `/demote` / `/settitle <title>` — Grant or remove admin rights and custom titles.\n"
+            "✧ `/slowmode <seconds>` / `/invitelink` / `/admins` — Set chat cooldown, fetch invite link, or list admins."
         ),
         "help_warns": (
-            "🟠 **Warnings & Anti-Flood** *(Group Admins)*\n\n"
-            "• `/warn <reason>` — Warn a user by reply.\n"
-            "• `/dwarn <reason>` — Delete message and warn user.\n"
-            "• `/swarn <reason>` — Silently warn user.\n"
-            "• `/rmwarn` | `/resetwarn` — Remove 1 warn or reset to 0.\n"
-            "• `/warns` — Check a user's current warnings.\n\n"
-            "• `/warnlimit <num>` — Set max warns before punishment.\n"
-            "• `/warnmode <ban|mute|kick>` — Choose warn punishment.\n\n"
-            "• `/setflood <num|off>` — Auto-punish rapid spam messages.\n"
-            "• `/floodmode <ban|mute|kick>` — Choose flood punishment.\n"
-            "• `/flood` — View current anti-flood settings."
+            "✦ **Warnings & Anti-Flood Module** *(Group Admins)*\n\n"
+            "✧ `/warn <reason>` — Issue a formal warning to a user by replying to their message.\n"
+            "✧ `/dwarn <reason>` — Delete the offending message and warn the user at the same time.\n"
+            "✧ `/swarn <reason>` — Silently warn a user without posting in chat.\n"
+            "✧ `/warns` — Check how many warnings you or a replied user currently have.\n"
+            "✧ `/rmwarn` / `/resetwarn` — Remove the latest warning or reset a user's warnings to 0.\n"
+            "✧ `/warnlimit <number>` — Set how many warnings trigger an automatic punishment.\n"
+            "✧ `/warnmode <ban|mute|kick>` — Choose what happens when a user hits the warn limit.\n"
+            "✧ `/setflood <number|off>` — Auto-punish users sending too many messages within 4 seconds.\n"
+            "✧ `/floodmode <ban|mute|kick>` — Set the punishment for flooders.\n"
+            "✧ `/flood` — View your group's current anti-flood configuration."
         ),
         "help_locks": (
-            "🟡 **Locks, Blocklists & Auto-Filters** *(Group Admins)*\n\n"
-            "• `/lock <type>` | `/unlock <type>` — Block specific content.\n"
-            "• `/locks` | `/locktypes` — View active & available locks.\n"
-            "  ↳ Types: `links`, `url`, `stickers`, `gif`, `photo`, `video`, `voice`, `document`, `forwards`, `media`, `cjk`, `cyrillic`, `all`\n\n"
-            "• `/nightmode on|off` — Lock media, stickers, GIFs & links.\n\n"
-            "• `/addblocklist <word>` | `/rmblocklist <word>` — Block words (supports `*` wildcards).\n"
-            "• `/blocklist` | `/blocklistmode <del|ban|mute|kick>`\n\n"
-            "• `/filter <word> <reply>` | `/stop <word>` | `/stopall` | `/filters` — Custom auto-replies."
+            "✦ **Locks, Blocklists & Auto-Filters** *(Group Admins)*\n\n"
+            "✧ `/lock <type>` — Automatically delete messages of a specific type.\n"
+            "✧ `/unlock <type>` — Allow that content type in your group again.\n"
+            "✧ `/locks` / `/locktypes` — View active locks or see all supported types (`links`, `url`, `stickers`, `gif`, `photo`, `video`, `voice`, `document`, `forwards`, `media`, `cjk`, `cyrillic`, `all`).\n"
+            "✧ `/nightmode on|off` — Quickly lock media, stickers, GIFs, and links overnight.\n"
+            "✧ `/addblocklist <word>` — Block a word or phrase (supports `*` wildcards).\n"
+            "✧ `/rmblocklist <word>` / `/blocklist` — Remove a blocked word or list all blocked words.\n"
+            "✧ `/blocklistmode <del|ban|mute|kick>` — Choose how Ruka punishes blocklist triggers.\n"
+            "✧ `/filter <word> <reply>` — Make Ruka automatically reply whenever someone says a keyword.\n"
+            "✧ `/stop <word>` / `/stopall` / `/filters` — Remove one filter, clear all, or list active filters."
         ),
         "help_feds": (
-            "🔵 **Security, Approvals, Reports & Feds**\n\n"
-            "• `/settings` — Toggle CAPTCHA, Anti-Raid, Clean Service & Clean Cmds.\n"
-            "• `/captcha on|off` | `/captchamode <button|math>`\n"
-            "• `/antiraid` | `/cleanservice` | `/cleancommand`\n\n"
-            "• `/approve` | `/unapprove` | `/approval` | `/approved` | `/unapproveall` — Exempt trusted users from locks & flood.\n\n"
-            "• `/report` or `@admin` — Report rule-breakers with quick action buttons (`/reports on|off`).\n"
-            "• `/setlog <id>` | `/unsetlog` | `/logchannel` — Audit logs.\n\n"
-            "• `/newfed <name>` | `/joinfed <id>` | `/leavefed` | `/fban` | `/funban` — Cross-group ban network."
+            "✦ **Security, Approvals, Reports & Federations**\n\n"
+            "✧ `/settings` — Open the interactive toggle panel for CAPTCHA, Anti-Raid, Clean Service & Clean Commands.\n"
+            "✧ `/captcha on|off` — Require new members to verify before chatting (auto-kicks after 2 mins).\n"
+            "✧ `/captchamode <button|math>` — Switch between a simple verification button or a math puzzle.\n"
+            "✧ `/antiraid` / `/cleanservice` / `/cleancommand` — Quick-toggle raid protection or auto-cleanup.\n"
+            "✧ `/approve` / `/unapprove` / `/approval` / `/approved` — Exempt trusted members from locks, blocklists & flood.\n"
+            "✧ `/report` or `@admin` — Reply to a rule-breaker to alert admins with one-tap Ban/Mute/Delete buttons.\n"
+            "✧ `/setlog <channel_id>` / `/unsetlog` / `/logchannel` — Send moderation logs to a private channel.\n"
+            "✧ `/newfed <name>` / `/joinfed <id>` / `/leavefed` / `/fban` / `/funban` — Ban spammers across all your linked groups."
         ),
         "help_notes": (
-            "🟣 **Rules, Notes & Command Disabling**\n\n"
-            "• `/setrules <text>` — Set the group rules.\n"
-            "• `/rules` — View the group rules.\n"
-            "• `/resetrules` — Clear the group rules.\n\n"
-            "• `/save <name> <text>` — Save a reusable note.\n"
-            "• `/get <name>` — Retrieve a saved note.\n"
-            "• `/notes` — List all saved notes in the chat.\n"
-            "• `/clear <name>` — Delete a saved note.\n\n"
-            "• `/disable <cmd>` | `/enable <cmd>` | `/disabled` — Disable specific commands in your group."
+            "✦ **Rules, Notes & Command Disabling**\n\n"
+            "✧ `/setrules <text>` — Save your group's official rules.\n"
+            "✧ `/rules` — Display the group's rules to members.\n"
+            "✧ `/resetrules` — Clear the saved group rules.\n"
+            "✧ `/save <name> <text>` — Store a reusable note that anyone can call anytime.\n"
+            "✧ `/get <name>` — Retrieve a saved note by its name.\n"
+            "✧ `/notes` — List all saved notes in the current group.\n"
+            "✧ `/clear <name>` — Delete a saved note.\n"
+            "✧ `/disable <cmd>` / `/enable <cmd>` / `/disabled` — Disable or re-enable specific commands in your group."
         ),
         "help_econ": (
-            "🟢 **Levels, Economy & Shop**\n\n"
-            "• `/rank` (`/level`) — View your Trainer Card, Rank, XP & Coins.\n"
-            "• `/leaderboard` (`/lb`) — Top members by XP.\n\n"
-            "• `/daily` — Claim your daily coins *(once every 24h)*.\n"
-            "• `/bal` — Check your wallet & XP.\n"
-            "• `/give <amount>` — Reply to send coins to a friend.\n\n"
-            "• `/shop` — Buy Katana, Armor, Lucky Clover, Gold Ring & Energy Drinks.\n"
-            "• `/inv` (`/inventory`) — View your owned items & perks."
+            "✦ **Levels, Economy & Shop**\n\n"
+            "✧ `/rank` (or `/level`) — Generate your Trainer Card showing your Rank, XP, Coins, and Gacha count.\n"
+            "✧ `/leaderboard` (or `/lb`) — View the top 10 users ranked by XP.\n"
+            "✧ `/daily` — Claim your daily coin & XP reward (available once every 24 hours).\n"
+            "✧ `/bal` (or `/balance`) — Check your or a replied user's coin wallet and XP.\n"
+            "✧ `/give <amount>` — Reply to a friend to transfer coins to them.\n"
+            "✧ `/shop` — Browse Ruka's Shop to buy Katana, Heavy Armor, Lucky Clover, Gold Ring, or Energy Drinks.\n"
+            "✧ `/inv` (or `/inventory`) — View your owned items and their active perks."
         ),
         "help_games": (
-            "⚔️ **Boss Raids, Gambling & Mini-Games**\n\n"
-            "• `/boss` — Spawn an Anime Boss in your group to fight together for coins & XP!\n"
-            "• `/duel` — Reply to a friend for a PvP duel *(Katana boosts win rate!)*.\n"
-            "• `/rob` — Reply to steal coins *(Heavy Armor blocks robberies!)*.\n\n"
-            "• `/bet <amount>` — Bet coins on a 2x flip.\n"
-            "• `/slot <amount>` — Spin the slot machine for up to 4x jackpot!\n\n"
-            "• `/rps` | `/trivia` | `/guess` — Interactive button games.\n"
-            "• `/dart` | `/basket` | `/bowl` — Quick mini-games."
+            "✦ **Boss Raids, Gambling & Mini-Games**\n\n"
+            "✧ `/boss` — Spawn a powerful Anime Boss in your group so everyone can attack it together for coins & XP!\n"
+            "✧ `/duel` — Reply to a friend to start a PvP duel (owning a Katana boosts your win chance!).\n"
+            "✧ `/rob` — Reply to a member to attempt a coin heist (Heavy Armor blocks robberies!).\n"
+            "✧ `/bet <amount>` — Risk your coins on a 2x double-or-nothing flip.\n"
+            "✧ `/slot <amount>` — Spin the slot machine for up to a 4x jackpot!\n"
+            "✧ `/rps` — Play Rock, Paper, Scissors against Ruka.\n"
+            "✧ `/trivia` — Answer live Anime & Manga trivia questions for coins.\n"
+            "✧ `/guess` / `/dart` / `/basket` / `/bowl` — Quick interactive mini-games."
         ),
         "help_family": (
-            "🌸 **Marriage & Family Lineage**\n\n"
-            "• `/marry` — Reply to propose marriage with Accept/Reject buttons.\n"
-            "• `/divorce` — End your current marriage.\n"
-            "• `/partner` | `/marriagestatus` — View your soulmate.\n\n"
-            "• `/adopt` — Reply to adopt someone as your child.\n"
-            "• `/sibling` — Reply to add someone as your sibling.\n"
-            "• `/disown` — Reply to remove a family member.\n"
-            "• `/runaway` — Leave your current family.\n"
-            "• `/family` | `/tree` — Generate your visual **Family Tree**!"
+            "✦ **Marriage & Family Lineage**\n\n"
+            "✧ `/marry` — Reply to someone to send a marriage proposal with Accept/Reject buttons.\n"
+            "✧ `/divorce` — End your current marriage.\n"
+            "✧ `/partner` (or `/marriagestatus`) — Check who you or a replied user are married to.\n"
+            "✧ `/adopt` — Reply to someone to adopt them as your child.\n"
+            "✧ `/sibling` — Reply to someone to add them as your sibling.\n"
+            "✧ `/disown` — Reply to a family member to remove them from your family.\n"
+            "✧ `/runaway` — Leave your current family lineage.\n"
+            "✧ `/family` (or `/tree`) — Generate a visual Family Tree connecting your family's profile pictures!"
         ),
         "help_gacha": (
-            "💎 **Waifu & Husbando Gacha & Social**\n\n"
-            "• `/gacha` — Spin for a Waifu or Husbando card (`50 💎` per spin; Lucky Clover boosts SSR odds!).\n"
-            "• `/collection` — View your collected cards.\n"
-            "• `/view <id or name>` — Inspect any card up close.\n\n"
-            "• `/gender <male|female>` | `/bio <text>` | `/mybio` — Customize your profile.\n"
-            "• `/lovecalc` | `/simprate` | `/iq` | `/waifurate` | `/luck` | `/power` | `/love`\n\n"
-            "• **GIF Reactions:** `/hug`, `/kiss`, `/slap`, `/pat`, `/cuddle`, `/poke`, `/wink`, `/cringe`, `/bonk`, `/blush`, `/dance`, `/yeet`, `/bite`, `/cry`, `/smug`, `/glare`, `/sleep`"
+            "✦ **Waifu & Husbando Gacha & Social**\n\n"
+            "✧ `/gacha` — Spend `50 💎` to pull a high-res Waifu or Husbando card (Lucky Clover boosts SSR odds!).\n"
+            "✧ `/collection` — View all the cards you've collected.\n"
+            "✧ `/view <id or name>` — Inspect any card from your collection up close.\n"
+            "✧ `/gender <male|female>` — Set your profile gender.\n"
+            "✧ `/bio <text>` / `/mybio` — Save and view your custom profile bio.\n"
+            "✧ `/lovecalc` / `/simprate` / `/iq` / `/waifurate` / `/luck` / `/power` / `/love` — Fun social meters.\n"
+            "✧ **GIF Reactions:** `/hug`, `/kiss`, `/slap`, `/pat`, `/cuddle`, `/poke`, `/wink`, `/cringe`, `/bonk`, `/blush`, `/dance`, `/yeet`, `/bite`, `/cry`, `/smug`, `/glare`, `/sleep`"
         ),
         "help_ai": (
-            "🎬 **Anime Encyclopedia & Ruka AI**\n\n"
-            "• `/ruka <msg>` (`/ai`, `/ask`) — Chat with Ruka (or just mention `Ruka` or reply to her messages/images!).\n"
-            "• `/imagine <prompt>` — Generate custom anime art.\n"
-            "• `/roast` | `/compliment` — Context-aware roasts & compliments.\n"
-            "• `/emojify` | `/summarize` | `/translate <lang>` | `/animeidea` | `/clearai`\n\n"
-            "• `/anime <name>` | `/manga <name>` | `/animechar <name>`\n"
-            "• `/topanime` | `/airing <name>` | `/randomanime` | `/quote`"
+            "✦ **Anime Encyclopedia & Ruka AI**\n\n"
+            "✧ `/ruka <msg>` (or `/ai`, `/ask`) — Chat with Ruka AI (or just mention `Ruka` or reply to her messages/images!).\n"
+            "✧ `/imagine <prompt>` — Generate custom anime artwork from your text prompt.\n"
+            "✧ `/roast` / `/compliment` — Reply to someone for a context-aware anime roast or compliment.\n"
+            "✧ `/emojify` / `/summarize` / `/translate <lang>` / `/animeidea` / `/clearai` — Smart AI utilities.\n"
+            "✧ `/anime <name>` — Search an anime's score, genres, airing status & synopsis.\n"
+            "✧ `/manga <name>` / `/animechar <name>` — Look up manga or anime characters.\n"
+            "✧ `/topanime` / `/airing <name>` / `/randomanime` / `/quote` — Trending anime, episode countdowns & quotes."
         ),
         "help_misc": (
-            "⚙️ **Connections, Privacy & Utilities**\n\n"
-            "• `/connect <chat_id>` | `/disconnect` | `/reconnect` | `/connection` — Manage your group from PM.\n"
-            "• `/info` | `/id` | `/ping` | `/afk <reason>` | `/privacy`\n\n"
-            "• `/poll Question | Opt1 | Opt2` — Create a group poll.\n"
-            "• `/choose Opt1 | Opt2` | `/decide` | `/toss` | `/hugall`\n"
-            "• `/mock` | `/reverse` | `/spoiler` | `/vapor` | `/morse` | `/tiny` | `/count`\n"
-            "• `/fact` | `/joke` | `/cat` | `/dog`"
+            "✦ **Connections, Privacy & Utilities**\n\n"
+            "✧ `/connect <chat_id>` / `/disconnect` / `/reconnect` / `/connection` — Manage your group's notes & rules from PM.\n"
+            "✧ `/info` — View a user's Trainer-style info card, ID, and username.\n"
+            "✧ `/id` / `/ping` / `/afk <reason>` / `/privacy` — Grab IDs, check latency, set AFK status, or view privacy info.\n"
+            "✧ `/poll Question | Opt1 | Opt2` — Create a native group poll.\n"
+            "✧ `/choose Opt1 | Opt2` / `/decide` / `/toss` / `/hugall` — Quick group helpers.\n"
+            "✧ `/mock` / `/reverse` / `/spoiler` / `/vapor` / `/morse` / `/tiny` / `/count` — Text formatters.\n"
+            "✧ `/fact` / `/joke` / `/cat` / `/dog` — Random facts, jokes & pet pics."
         ),
     }
 
