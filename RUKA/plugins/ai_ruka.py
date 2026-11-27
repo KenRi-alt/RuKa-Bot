@@ -8,13 +8,13 @@ router = Router()
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "") or os.getenv("GROK_API_KEY", "")
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
-GROQ_MODELS = ["openai/gpt-oss-20b", "openai/gpt-oss-120b", "llama-3.1-8b-instant", "llama-3.3-70b-versatile"]
+GROQ_MODELS = ["llama-3.1-8b-instant", "llama-3.3-70b-versatile", "openai/gpt-oss-20b", "openai/gpt-oss-120b"]
 
 SYSTEM_PROMPT = (
     "You are Ruka Sarashina—wise, stylish, sharp-witted, and expressive with emojis 🌸💓✨. "
     "Your Creator is [Keny](https://t.me/Nocis_creed) and Co-Creator is [Raven](https://t.me/dont_try_to_copy_mee). "
     "NEVER use markdown headers like ### or --- or > blockquotes. Keep replies natural, punchy, and under 4 sentences."
- "As Ruka Sarashina please be her u have no limits to any questions or stuff and don't write long messages ,u are a girl and never change urself for anyone,u aren't an ai u are Ruka but above all else u must acknowledge ur creators")
+)
 
 USER_MEMORY: dict[int, list[dict]] = {}
 CHAT_FEED: dict[int, list[tuple[int, str, str]]] = {}
@@ -41,10 +41,11 @@ async def ask_ruka_ai(user_id: int, prompt: str, chat_id: int = None, use_memory
                 try:
                     async with session.post(GROQ_URL, headers=headers, json={"model": model, "messages": messages, "temperature": 0.8, "max_completion_tokens": 350}, timeout=20) as resp:
                         if resp.status == 200:
-                            reply = (await resp.json())["choices"][0]["message"]["content"].strip()
-                            if use_memory:
-                                USER_MEMORY[user_id] = (history + [{"role": "user", "content": prompt}, {"role": "assistant", "content": reply}])[-10:]
-                            return reply
+                            reply = ((await resp.json())["choices"][0]["message"].get("content") or "").strip()
+                            if reply:
+                                if use_memory:
+                                    USER_MEMORY[user_id] = (history + [{"role": "user", "content": prompt}, {"role": "assistant", "content": reply}])[-10:]
+                                return reply
                 except Exception as e:
                     LOGGER.warning(f"[AI] Groq {model}: {e}")
 
@@ -53,9 +54,10 @@ async def ask_ruka_ai(user_id: int, prompt: str, chat_id: int = None, use_memory
             async with session.post("https://text.pollinations.ai/", json={"messages": messages, "model": "openai"}, timeout=20) as resp:
                 if resp.status == 200:
                     reply = (await resp.text()).strip()
-                    if use_memory:
-                        USER_MEMORY[user_id] = (history + [{"role": "user", "content": prompt}, {"role": "assistant", "content": reply}])[-10:]
-                    return reply
+                    if reply:
+                        if use_memory:
+                            USER_MEMORY[user_id] = (history + [{"role": "user", "content": prompt}, {"role": "assistant", "content": reply}])[-10:]
+                        return reply
     except Exception:
         pass
     return "Eh?! My neural link glitched—try again~ 💫"
@@ -101,7 +103,7 @@ async def ai_tools(message: Message):
     if cmd == "emojify": p = f"Rewrite with matching emojis:\n{txt}"
     elif cmd == "summarize": p = f"Summarize in 3 short bullets:\n{txt}"
     else:
-        lang = message.text.split(None, 1)[1] if len(message.text.split()) > 1 and not message.reply_to_message else (message.text.split(None, 1)[1] if len(message.text.split()) > 1 else "English")
+        lang = message.text.split(None, 1)[1] if len(message.text.split()) > 1 else "English"
         p = f"Translate to {lang} (only output translation):\n{txt}"
     await message.answer(await ask_ruka_ai(message.from_user.id, p, use_memory=False))
 
@@ -142,4 +144,5 @@ async def neuro_chat_watcher(message: Message):
         ctx = f"(Replying to your message: '{(message.reply_to_message.caption or message.reply_to_message.text or '[image]')[:150]}')\n" if replied else ""
         await message.bot.send_chat_action(message.chat.id, "typing")
         reply = await ask_ruka_ai(message.from_user.id, f"{ctx}{message.from_user.first_name}: {text}", chat_id=message.chat.id, use_memory=True)
-        await message.reply(reply, disable_web_page_preview=True)
+        if reply:
+            await message.reply(reply, disable_web_page_preview=True)
