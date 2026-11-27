@@ -10,12 +10,12 @@ from RUKA.utils.db import get_pool, get_user_stats, update_user_stats, add_inven
 router = Router()
 RUKA_PIC = "https://ganga--link--ghhzdp9sv8hk.code.run/i/s0s0y8txhk.jpg"
 RUKA_CACHE: bytes | None = None
-ROB_CD, ACTIVE_BOSS, LIVE_TRIVIA = {}, {}, {}
+ROB_CD, BOSS_CD, ACTIVE_BOSS, LIVE_TRIVIA = {}, {}, {}, {}
 
 SHOP_ITEMS = {
-    "katana": {"name": "🥷 Katana Blade", "price": 5000, "desc": "+20% Duel win rate"},
-    "armor": {"name": "🛡️ Heavy Armor", "price": 3000, "desc": "Blocks /rob attempts"},
-    "clover": {"name": "🍀 Lucky Clover", "price": 2000, "desc": "Boosts Gacha SSR odds"},
+    "katana": {"name": "🥷 Katana Blade", "price": 5000, "desc": "+20% Duel win & +40 Boss DMG"},
+    "armor": {"name": "🛡️ Heavy Armor", "price": 3000, "desc": "Blocks /rob & Boss reflect"},
+    "clover": {"name": "🍀 Lucky Clover", "price": 2000, "desc": "Boosts Gacha SSR & Boss crit"},
     "gold_ring": {"name": "💍 Gold Ring", "price": 1500, "desc": "+100 Bonus Daily Coins"},
     "energy": {"name": "⚡ Energy Drink", "price": 800, "desc": "+150 Instant XP"},
 }
@@ -24,6 +24,13 @@ FALLBACK_TRIVIA = [
     ("In 'Rent-a-Girlfriend', what is Ruka Sarashina's signature accessory?", ["Ribbon", "Glasses", "Hat", "Scarf"], 0),
     ("Who is the main protagonist of 'Naruto'?", ["Sasuke", "Naruto", "Kakashi", "Itachi"], 1),
 ]
+
+BOSS_ROSTER = {
+    "Madara Uchiha": {"hp": 900, "skills": [("👁️ Rinnegan: Limbo Clones", "reflect"), ("🌑 Chibaku Tensei", "stun")]},
+    "Satoru Gojo": {"hp": 850, "skills": [("♾️ Limitless: Infinity", "shield"), ("🌌 Domain: Unlimited Void", "stun")]},
+    "Ryomen Sukuna": {"hp": 950, "skills": [("⛩️ Domain: Malevolent Shrine", "reflect"), ("🔪 Cleave & Dismantle", "heal")]},
+    "Colossal Titan": {"hp": 1000, "skills": [("💨 Steam Eruption", "stun"), ("🪨 Titan Hardening", "shield")]},
+}
 
 
 def get_rank(xp: int) -> str:
@@ -164,9 +171,17 @@ async def inv_cmd(message: Message):
 
 @router.message(Command("boss", prefix="/!"), F.chat.type.in_({"group", "supergroup"}))
 async def spawn_boss(message: Message):
-    cid, name = message.chat.id, random.choice(["Colossal Titan", "Demon King Muzan", "Madara Uchiha", "Sukuna"])
-    ACTIVE_BOSS[cid] = {"name": name, "hp": 600, "max": 600}
-    await message.answer(f"👹 **WILD {name.upper()} APPEARED!**\n❤️❤️❤️❤️❤️ `600 / 600 HP`", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⚔️ Attack Boss!", callback_data="boss_atk")]]))
+    cid = message.chat.id
+    if cid in ACTIVE_BOSS:
+        b = ACTIVE_BOSS[cid]
+        return await message.answer(f"👹 **{b['name']}** is already active! (`{b['hp']}/{b['max']} HP`)")
+    name = random.choice(list(BOSS_ROSTER.keys()))
+    hp = BOSS_ROSTER[name]["hp"]
+    ACTIVE_BOSS[cid] = {"name": name, "hp": hp, "max": hp, "state": None, "dmg_log": {}}
+    await message.answer(
+        f"👹 **RAID BOSS: {name.upper()}!**\n❤️❤️❤️❤️❤️ `{hp} / {hp} HP`\n⚡ *Beware their Domain & Special Abilities!*",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⚔️ Attack Boss!", callback_data="boss_atk")]])
+    )
 
 
 @router.message(Command("duel", prefix="/!"), F.chat.type.in_({"group", "supergroup"}))
@@ -211,17 +226,58 @@ async def games_cb(query: CallbackQuery):
         await update_user_stats(uid, coins=-item["price"])
         if k == "energy": await update_user_stats(uid, xp=150); return await query.answer("⚡ +150 XP!", show_alert=True)
         await add_inventory_item(uid, k, 1); return await query.answer(f"✅ Bought {item['name']}!", show_alert=True)
+
     if d == "boss_atk":
         cid = query.message.chat.id; boss = ACTIVE_BOSS.get(cid)
-        if not boss: return await query.answer("Already defeated!", show_alert=True)
-        dmg = random.randint(40, 100) + (35 if (await get_inventory(uid)).get("katana", 0) > 0 else 0)
-        boss["hp"] = max(0, boss["hp"] - dmg); await update_user_stats(uid, coins=15, xp=10)
+        if not boss: return await query.answer("Boss already defeated!", show_alert=True)
+        now, cd = time.time(), BOSS_CD.get((cid, uid), 0)
+        if now < cd: return await query.answer(f"⏳ Cooldown! Wait {int(cd - now)}s before attacking again!", show_alert=True)
+
+        inv = await get_inventory(uid)
+        dmg = random.randint(45, 110) + (40 if inv.get("katana", 0) > 0 else 0)
+        if inv.get("clover", 0) > 0 and random.random() < 0.35: dmg = int(dmg * 1.5)
+
+        effect_msg, next_cd = "", 10
+        if boss["state"] == "shield":
+            dmg = max(10, dmg // 3); boss["state"] = None; effect_msg = "\n🛡️ *Boss Barrier blocked 65% of your damage!*"
+        elif boss["state"] == "reflect":
+            boss["state"] = None
+            if inv.get("armor", 0) == 0:
+                await update_user_stats(uid, coins=-20); effect_msg = "\n🩸 *Countered! Lost 20 💎!*"
+            else:
+                effect_msg = "\n🛡️ *Your Heavy Armor blocked the counter-attack!*"
+
+        boss["hp"] = max(0, boss["hp"] - dmg)
+        boss["dmg_log"][uid] = (query.from_user.first_name, boss["dmg_log"].get(uid, ("", 0))[1] + dmg)
+
+        # Boss randomly activates a special ability!
+        skill_alert = ""
+        if boss["hp"] > 0 and random.random() < 0.35:
+            sname, stype = random.choice(BOSS_ROSTER[boss["name"]]["skills"])
+            if stype == "stun": next_cd = 18; skill_alert = f"\n⚡ **{boss['name']} cast {sname}!** (18s Stun!)"
+            elif stype == "heal": boss["hp"] = min(boss["max"], boss["hp"] + 90); skill_alert = f"\n🩸 **{boss['name']} used {sname}!** (+90 HP)"
+            else: boss["state"] = stype; skill_alert = f"\n🌀 **{boss['name']} activated {sname}!**"
+
+        BOSS_CD[(cid, uid)] = now + next_cd
+        await update_user_stats(uid, coins=15, xp=12)
+
         if boss["hp"] == 0:
-            ACTIVE_BOSS.pop(cid, None); await update_user_stats(uid, coins=200, xp=50)
-            return await query.message.edit_text(f"🏆 **{boss['name']} DEFEATED!**\n💥 {query.from_user.full_name} won **200 💎**!", parse_mode=None)
+            ACTIVE_BOSS.pop(cid, None)
+            mvp_uid, (mvp_name, mvp_dmg) = max(boss["dmg_log"].items(), key=lambda x: x[1][1])
+            await update_user_stats(uid, coins=200, xp=60); await update_user_stats(mvp_uid, coins=150, xp=40)
+            return await query.message.edit_text(
+                f"🏆 **{boss['name']} DEFEATED!**\n"
+                f"⚔️ Final Blow: {query.from_user.full_name} (`{dmg} DMG`, `+200 💎`)\n"
+                f"👑 MVP: {mvp_name} (`{mvp_dmg} Total DMG`, `+150 💎`)", parse_mode=None
+            )
         hearts = "❤️" * max(1, (boss["hp"] * 5) // boss["max"]) + "🖤" * (5 - max(1, (boss["hp"] * 5) // boss["max"]))
-        await query.message.edit_text(f"👹 **{boss['name']}**\n{hearts} `{boss['hp']}/{boss['max']} HP`\n💥 {query.from_user.first_name}: `{dmg}` DMG!", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⚔️ Attack Boss!", callback_data="boss_atk")]]))
+        await query.message.edit_text(
+            f"👹 **{boss['name']}**\n{hearts} `{boss['hp']}/{boss['max']} HP`\n"
+            f"💥 {query.from_user.first_name} dealt `{dmg}` DMG!{effect_msg}{skill_alert}",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⚔️ Attack Boss!", callback_data="boss_atk")]])
+        )
         return await query.answer(f"💥 {dmg} DMG! (+15 💎)")
+
     if d.startswith("rps_"):
         up, bp = d.split("_")[1], random.choice(["rock", "paper", "scissors"])
         win = (up, bp) in [("rock", "scissors"), ("paper", "rock"), ("scissors", "paper")]
