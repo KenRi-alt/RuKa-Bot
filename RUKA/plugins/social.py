@@ -2,18 +2,16 @@ import time, random, aiohttp
 from io import BytesIO
 from aiogram import Router, F
 from aiogram.filters import Command
-from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, BufferedInputFile
 from RUKA.utils.db import (
     set_marriage, get_partner, remove_marriage, add_relation, remove_relation,
     runaway_family, get_family, set_profile, get_profile,
     add_gacha_card, get_user_cards, get_user_stats, update_user_stats, get_inventory
 )
 from RUKA.utils.image_gen import generate_family_tree
-from aiogram.types import BufferedInputFile
 
 router = Router()
 
-# --- HIGH-QUALITY CURATED CHARACTER POOLS ---
 WAIFU_POOL = [
     ("Ruka Sarashina", "ruka_sarashina", "Rent-a-Girlfriend"),
     ("Emilia", "emilia_(re:zero)", "Re:Zero"),
@@ -40,14 +38,9 @@ HUSBANDO_POOL = [
     ("Killua Zoldyck", "killua_zoldyck", "Hunter x Hunter"),
     ("Sung Jin-Woo", "sung_jin-woo", "Solo Leveling"),
 ]
-
-# Rarity Tiers: (Label, Emoji, Weight, Power Range)
 RARITIES = [
-    ("Common", "⚪", 50, (1000, 2200)),
-    ("Rare", "🔵", 28, (2300, 3800)),
-    ("Epic", "🟣", 14, (4000, 5800)),
-    ("Mythical", "🔴", 6, (6200, 8200)),
-    ("Legendary", "🟡", 2, (8500, 9999)),
+    ("Common", "⚪", 50, (1000, 2200)), ("Rare", "🔵", 28, (2300, 3800)),
+    ("Epic", "🟣", 14, (4000, 5800)), ("Mythical", "🔴", 6, (6200, 8200)), ("Legendary", "🟡", 2, (8500, 9999)),
 ]
 
 
@@ -211,9 +204,8 @@ async def family_tree_cmd(message: Message):
     await message.answer_photo(BufferedInputFile(img.getvalue(), filename="tree.jpg"), caption=f"🌳 {u.full_name}'s Family Tree", parse_mode=None)
 
 
-# --- 3. ORIGINAL RUKA GACHA (1x / 10x Buttons + Weighted Rarity + Full HD Art) ---
+# --- 3. ORIGINAL RUKA GACHA ---
 async def _pull_hd_art(tag: str, is_waifu: bool) -> str | None:
-    # Safebooru sorted by highest score for top-tier gorgeous art!
     sb = await _fetch_json(f"https://safebooru.org/index.php?page=dapi&s=post&q=index&json=1&limit=30&tags={tag}+solo+sort:score:desc")
     if isinstance(sb, list) and sb:
         valid = [p.get("file_url") for p in sb if p.get("file_url") and not p["file_url"].endswith((".mp4", ".webm"))]
@@ -223,9 +215,7 @@ async def _pull_hd_art(tag: str, is_waifu: bool) -> str | None:
 
 
 def _roll_rarity(has_clover: bool) -> tuple[str, str, int]:
-    weights = [r[2] for r in RARITIES]
-    if has_clover:
-        weights = [40, 30, 18, 9, 3]
+    weights = [40, 30, 18, 9, 3] if has_clover else [r[2] for r in RARITIES]
     name, emoji, _, (pmin, pmax) = random.choices(RARITIES, weights=weights, k=1)[0]
     return name, emoji, random.randint(pmin, pmax)
 
@@ -239,44 +229,32 @@ async def gacha_menu_cmd(message: Message):
         [InlineKeyboardButton(text="🌸 12h Exclusive Shop", callback_data=f"wshop_open_{message.from_user.id}")],
     ])
     await message.answer(
-        f"🌸 **Ruka's Royal Gacha**\n\n"
-        f"💰 Your Wallet: **`{s['coins']} 💎`**\n\n"
-        f"**Drop Rates:**\n"
-        f"⚪ Common: `50%` | 🔵 Rare: `28%`\n"
-        f"🟣 Epic: `14%` | 🔴 Mythical: `6%` | 🟡 Legendary: `2%`\n\n"
-        f"Choose your spin below:",
+        f"🌸 **Ruka's Royal Gacha**\n\n💰 Wallet: **`{s['coins']} 💎`**\n\n"
+        f"**Drop Rates:**\n⚪ Common: `50%` | 🔵 Rare: `28%`\n🟣 Epic: `14%` | 🔴 Mythical: `6%` | 🟡 Legendary: `2%`",
         reply_markup=btns
     )
 
 
 @router.callback_query(F.data.startswith("gspin_"))
 async def gacha_spin_cb(query: CallbackQuery):
-    _, count_s, owner_id = query.data.split("_")
-    count, uid = int(count_s), int(owner_id)
-    if query.from_user.id != uid:
-        return await query.answer("❌ Use /gacha for your own spin menu!", show_alert=True)
-
+    _, count_s, owner_id = query.data.split("_"); count, uid = int(count_s), int(owner_id)
+    if query.from_user.id != uid: return await query.answer("❌ Use /gacha for your own menu!", show_alert=True)
     cost = 50 if count == 1 else 450
     s = await get_user_stats(uid)
-    if s["coins"] < cost:
-        return await query.answer(f"❌ Need {cost} 💎! You have {s['coins']} 💎.", show_alert=True)
+    if s["coins"] < cost: return await query.answer(f"❌ Need {cost} 💎! You have {s['coins']} 💎.", show_alert=True)
 
     await query.answer("🎲 Spinning...")
     await update_user_stats(uid, coins=-cost)
     has_clover = (await get_inventory(uid)).get("clover", 0) > 0
-
     pulls = []
     for _ in range(count):
         is_w = random.random() < 0.72
         name, tag, anime = random.choice(WAIFU_POOL if is_w else HUSBANDO_POOL)
         rarity, emoji, power = _roll_rarity(has_clover)
-        ctype = "Waifu" if is_w else "Husbando"
-        pulls.append((name, tag, anime, rarity, emoji, power, ctype))
+        pulls.append((name, tag, anime, rarity, emoji, power, "Waifu" if is_w else "Husbando"))
 
-    # Pick the rarest/highest-power pull to showcase with full HD image
     best = max(pulls, key=lambda x: x[5])
     best_url = await _pull_hd_art(best[1], best[6] == "Waifu")
-
     saved = []
     for name, tag, anime, rarity, emoji, power, ctype in pulls:
         url = best_url if (name == best[0] and best_url) else (await _pull_hd_art(tag, ctype == "Waifu") or best_url or "")
@@ -285,27 +263,15 @@ async def gacha_spin_cb(query: CallbackQuery):
 
     if count == 1:
         cid, name, anime, rarity, emoji, power, ctype, url = saved[0]
-        cap = (
-            f"✨ {query.from_user.full_name} pulled a {ctype}!\n\n"
-            f"🆔 #{cid}: {name}\n📺 {anime}\n(RARITY: {emoji} {rarity.upper()} | ⚡ {power})"
-        )
-        if url:
-            await query.message.answer_photo(url, caption=cap, parse_mode=None)
-        else:
-            await query.message.answer(cap, parse_mode=None)
+        cap = f"✨ {query.from_user.full_name} pulled a {ctype}!\n\n🆔 #{cid}: {name}\n📺 {anime}\n(RARITY: {emoji} {rarity.upper()} | ⚡ {power})"
+        await (query.message.answer_photo(url, caption=cap, parse_mode=None) if url else query.message.answer(cap, parse_mode=None))
     else:
-        summary = [f"⚡ 10x Spin Results (-450 💎) for {query.from_user.full_name}:\n"]
-        for cid, name, anime, rarity, emoji, power, ctype, _ in saved:
-            summary.append(f"• #{cid} {emoji} {name} ({anime}) — ⚡{power}")
-        summary.append(f"\n🌟 Best Pull: {best[4]} {best[0]} ({best[3]})")
-        cap = "\n".join(summary)
-        if best_url:
-            await query.message.answer_photo(best_url, caption=cap[:1000], parse_mode=None)
-        else:
-            await query.message.answer(cap, parse_mode=None)
+        summary = [f"⚡ 10x Spin (-450 💎) for {query.from_user.full_name}:\n"] + [f"• #{c[0]} {c[4]} {c[1]} ({c[2]}) — ⚡{c[5]}" for c in saved] + [f"\n🌟 Best: {best[4]} {best[0]} ({best[3]})"]
+        cap = "\n".join(summary)[:1000]
+        await (query.message.answer_photo(best_url, caption=cap, parse_mode=None) if best_url else query.message.answer(cap, parse_mode=None))
 
 
-# --- 4. 12-HOUR ROTATING EXCLUSIVE WAIFU SHOP (/waifushop) ---
+# --- 4. 12-HOUR EXCLUSIVE WAIFU SHOP (With Featured Banner!) ---
 def _get_12h_shop():
     epoch = int(time.time() // 43200)
     rem = 43200 - (int(time.time()) % 43200)
@@ -314,11 +280,13 @@ def _get_12h_shop():
     items = []
     for idx, (name, tag, anime) in enumerate(picks):
         is_leg = idx == 0
-        rarity = "🟡 Legendary" if is_leg else "🔴 Mythical"
-        price = rng.randint(7500, 12000) if is_leg else rng.randint(3500, 6000)
-        power = rng.randint(8800, 9999) if is_leg else rng.randint(6500, 8400)
-        ctype = "Waifu" if (name, tag, anime) in WAIFU_POOL else "Husbando"
-        items.append({"idx": idx, "name": name, "tag": tag, "anime": anime, "rarity": rarity, "price": price, "power": power, "ctype": ctype})
+        items.append({
+            "idx": idx, "name": name, "tag": tag, "anime": anime,
+            "rarity": "🟡 Legendary" if is_leg else "🔴 Mythical",
+            "price": rng.randint(7500, 12000) if is_leg else rng.randint(3500, 6000),
+            "power": rng.randint(8800, 9999) if is_leg else rng.randint(6500, 8400),
+            "ctype": "Waifu" if (name, tag, anime) in WAIFU_POOL else "Husbando",
+        })
     return items, rem
 
 
@@ -330,69 +298,57 @@ async def waifu_shop_cmd(event: Message | CallbackQuery):
     h, m = divmod(rem // 60, 60)
     s = await get_user_stats(uid)
 
-    lines = [f"🌸 **Exclusive 12h Waifu Shop**\n⏳ Resets in: `{h}h {m}m` | 💰 Wallet: `{s['coins']} 💎`\n"]
+    lines = [f"🌸 Exclusive 12h Waifu Shop\n⏳ Resets in: {h}h {m}m | 💰 Wallet: {s['coins']} 💎\n"]
     btns = []
     for it in items:
-        lines.append(f"• {it['rarity']} **{it['name']}** (*{it['anime']}*)\n  ↳ ⚡ `{it['power']} PWR` | 💎 `{it['price']} Coins`")
+        lines.append(f"• {it['rarity']} {it['name']} ({it['anime']})\n  ↳ ⚡ {it['power']} PWR | 💎 {it['price']} Coins")
         btns.append([InlineKeyboardButton(text=f"Buy {it['name']} ({it['price']} 💎)", callback_data=f"wbuy_{it['idx']}_{uid}")])
 
+    featured_url = await _pull_hd_art(items[0]["tag"], items[0]["ctype"] == "Waifu")
     markup = InlineKeyboardMarkup(inline_keyboard=btns)
-    if isinstance(event, CallbackQuery):
-        await event.message.answer("\n".join(lines), reply_markup=markup)
-        await event.answer()
+    target_msg = event.message if isinstance(event, CallbackQuery) else event
+    if featured_url:
+        await target_msg.answer_photo(featured_url, caption="\n".join(lines), reply_markup=markup, parse_mode=None)
     else:
-        await event.answer("\n".join(lines), reply_markup=markup)
+        await target_msg.answer("\n".join(lines), reply_markup=markup, parse_mode=None)
+    if isinstance(event, CallbackQuery): await event.answer()
 
 
 @router.callback_query(F.data.startswith("wbuy_"))
 async def waifu_shop_buy(query: CallbackQuery):
-    _, idx_s, owner_id = query.data.split("_")
-    idx, uid = int(idx_s), int(owner_id)
-    if query.from_user.id != uid:
-        return await query.answer("❌ Open your own /waifushop!", show_alert=True)
-    items, _ = _get_12h_shop()
-    it = items[idx]
-    s = await get_user_stats(uid)
-    if s["coins"] < it["price"]:
-        return await query.answer(f"❌ Need {it['price']} 💎!", show_alert=True)
+    _, idx_s, owner_id = query.data.split("_"); idx, uid = int(idx_s), int(owner_id)
+    if query.from_user.id != uid: return await query.answer("❌ Open your own /waifushop!", show_alert=True)
+    items, _ = _get_12h_shop(); it = items[idx]
+    if (await get_user_stats(uid))["coins"] < it["price"]: return await query.answer(f"❌ Need {it['price']} 💎!", show_alert=True)
 
     await query.answer("✨ Purchasing...")
     await update_user_stats(uid, coins=-it["price"])
     url = await _pull_hd_art(it["tag"], it["ctype"] == "Waifu") or ""
     cid = await add_gacha_card(uid, it["name"], it["ctype"], it["anime"], it["rarity"], it["power"], url)
     cap = f"🛍️ Purchased Exclusive Card!\n\n🆔 #{cid}: {it['name']} ({it['ctype']})\n📺 {it['anime']}\n(RARITY: {it['rarity']} | ⚡ {it['power']})"
-    if url:
-        await query.message.answer_photo(url, caption=cap, parse_mode=None)
-    else:
-        await query.message.answer(cap, parse_mode=None)
+    await (query.message.answer_photo(url, caption=cap, parse_mode=None) if url else query.message.answer(cap, parse_mode=None))
 
 
-# --- 5. ORGANIZED /collection (With Filters) & WORKING /view ---
+# --- 5. /collection & /view ---
 def _format_collection(cards: list[dict], name: str, flt: str = "all") -> tuple[str, InlineKeyboardMarkup]:
     if flt == "waifu": filtered = [c for c in cards if c["char_type"] == "Waifu"]
     elif flt == "husbando": filtered = [c for c in cards if c["char_type"] == "Husbando"]
-    elif flt == "high": filtered = [c for c in cards if "Mythical" in c["rarity"] or "Legendary" in c["rarity"] or "Epic" in c["rarity"]]
+    elif flt == "high": filtered = [c for c in cards if any(x in c["rarity"] for x in ("Mythical", "Legendary", "Epic"))]
     else: filtered = cards
 
-    # Group by anime series
     by_series: dict[str, list[dict]] = {}
-    for c in filtered[:25]:
-        by_series.setdefault(c["anime"], []).append(c)
+    for c in filtered[:25]: by_series.setdefault(c["anime"], []).append(c)
 
     lines = [f"🃏 {name}'s Collection ({len(filtered)} shown / {len(cards)} total)\n"]
     for series, clist in by_series.items():
         lines.append(f"↪ {series}")
-        for c in clist:
-            lines.append(f"  | #{c['card_id']} | {c['rarity']} {c['card_name']} (⚡{c['power']})")
-    if not filtered:
-        lines.append("No cards match this filter yet!")
+        for c in clist: lines.append(f"  | #{c['card_id']} | {c['rarity']} {c['card_name']} (⚡{c['power']})")
+    if not filtered: lines.append("No cards match this filter yet!")
     lines.append("\nUse /view <id or name> to inspect any card!")
 
     btns = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📋 All", callback_data="col_all"),
-         InlineKeyboardButton(text="💖 Waifus", callback_data="col_waifu")],
-        [InlineKeyboardButton(text="💙 Husbandos", callback_data="col_husbando"),
-         InlineKeyboardButton(text="🔥 High Rarity", callback_data="col_high")],
+        [InlineKeyboardButton(text="📋 All", callback_data="col_all"), InlineKeyboardButton(text="💖 Waifus", callback_data="col_waifu")],
+        [InlineKeyboardButton(text="💙 Husbandos", callback_data="col_husbando"), InlineKeyboardButton(text="🔥 High Rarity", callback_data="col_high")],
     ])
     return "\n".join(lines), btns
 
@@ -400,43 +356,28 @@ def _format_collection(cards: list[dict], name: str, flt: str = "all") -> tuple[
 @router.message(Command("collection", prefix="/!"))
 async def collection_cmd(message: Message):
     cards = await get_user_cards(message.from_user.id)
-    if not cards:
-        return await message.answer("📭 Your collection is empty! Use `/gacha` to spin!")
+    if not cards: return await message.answer("📭 Empty! Spin `/gacha`!")
     txt, btns = _format_collection(cards, message.from_user.full_name, "all")
     await message.answer(txt, reply_markup=btns, parse_mode=None)
 
 
 @router.callback_query(F.data.startswith("col_"))
 async def collection_cb(query: CallbackQuery):
-    flt = query.data.split("_")[1]
-    cards = await get_user_cards(query.from_user.id)
-    txt, btns = _format_collection(cards, query.from_user.full_name, flt)
-    try:
-        await query.message.edit_text(txt, reply_markup=btns, parse_mode=None)
-    except Exception:
-        pass
+    txt, btns = _format_collection(await get_user_cards(query.from_user.id), query.from_user.full_name, query.data.split("_")[1])
+    try: await query.message.edit_text(txt, reply_markup=btns, parse_mode=None)
+    except Exception: pass
     await query.answer()
 
 
 @router.message(Command("view", prefix="/!"))
 async def view_card_cmd(message: Message):
     p = message.text.split(None, 1)
-    if len(p) < 2:
-        return await message.answer("Usage: `/view <id or name>` (e.g. `/view 1` or `/view Emilia`)")
+    if len(p) < 2: return await message.answer("Usage: `/view <id or name>`")
     q = p[1].lstrip("#").strip().lower()
-    cards = await get_user_cards(message.from_user.id)
-    f = next((c for c in cards if str(c["card_id"]) == q or q in c["card_name"].lower()), None)
-    if not f:
-        return await message.answer("❌ Card not found in your collection!")
-    cap = (
-        f"🃏 Card #{f['card_id']}: {f['card_name']} ({f['char_type']})\n"
-        f"📺 {f['anime']}\n"
-        f"(RARITY: {f['rarity']} | ⚡ {f['power']} PWR)"
-    )
-    if f.get("image_url"):
-        await message.answer_photo(f["image_url"], caption=cap, parse_mode=None)
-    else:
-        await message.answer(cap, parse_mode=None)
+    f = next((c for c in await get_user_cards(message.from_user.id) if str(c["card_id"]) == q or q in c["card_name"].lower()), None)
+    if not f: return await message.answer("❌ Card not found!")
+    cap = f"🃏 Card #{f['card_id']}: {f['card_name']} ({f['char_type']})\n📺 {f['anime']}\n(RARITY: {f['rarity']} | ⚡ {f['power']} PWR)"
+    await (message.answer_photo(f["image_url"], caption=cap, parse_mode=None) if f.get("image_url") else message.answer(cap, parse_mode=None))
 
 
 # --- 6. IDENTITY & LOVE ---
@@ -446,7 +387,7 @@ async def profile_cmds(message: Message):
     if cmd == "gender":
         p = message.text.split()
         if len(p) < 2 or p[1].lower() not in ("male", "female"): return await message.answer("Usage: `/gender male` or `/gender female`")
-        await set_profile(message.from_user.id, gender=p[1].capitalize()); return await message.answer(f"✅ Gender saved: **{p[1].capitalize()}**!")
+        await set_profile(message.from_user.id, gender=p[1].capitalize()); return await message.answer(f"✅ Gender: **{p[1].capitalize()}**!")
     if cmd == "bio":
         p = message.text.split(None, 1)
         if len(p) < 2: return await message.answer("Usage: `/bio <text>`")
