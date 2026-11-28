@@ -6,16 +6,16 @@ from aiogram.dispatcher.event.bases import SkipHandler
 from aiogram.types import Message, CallbackQuery, ChatPermissions, InlineKeyboardMarkup, InlineKeyboardButton, BufferedInputFile
 from RUKA.utils.image_gen import generate_4k_profile
 from RUKA.utils.db import (
-    get_pool, get_chat_settings, set_chat_num, set_lock, get_locks,
+    get_pool, get_chat_settings, set_chat_num, set_chat_field, set_lock, get_locks,
     set_blacklist, get_blacklists, update_warn, get_warns, set_rules, get_rules,
     save_note, get_note, get_notes, delete_note, approve_user, unapprove_user,
     is_approved, get_approved, set_log_channel, unset_log_channel, get_log_channel,
-    create_fed, join_fed, get_chat_fed, fban_user, funban_user, get_filters
+    create_fed, join_fed, get_chat_fed, fban_user, funban_user, get_filters,
+    set_connection, get_connection, set_afk, get_afk
 )
 
 router = Router()
-USER_CONNECTED, LAST_CONNECTED, AFK_USERS, FLOOD_TRACKER = {}, {}, {}, {}
-WARN_MODES, FLOOD_MODES, BL_MODES, REPORTS_OFF = {}, {}, {}, set()
+FLOOD_TRACKER: dict[tuple[int, int], list[float]] = {}
 LOCK_TYPES = {
     "all", "links", "url", "invitelink", "botlink", "stickers", "gif",
     "photo", "video", "voice", "document", "forwards", "media", "spoiler",
@@ -55,8 +55,9 @@ async def warn_cmds(message: Message):
         elif cmd == "swarn":
             try: await message.delete()
             except Exception: pass
-        lim = (await get_chat_settings(message.chat.id)).get("warn_limit", 3)
-        w, mode = await update_warn(message.chat.id, t.id, delta=1), WARN_MODES.get(message.chat.id, "ban")
+        s = await get_chat_settings(message.chat.id)
+        lim, mode = s.get("warn_limit", 3), s.get("warn_mode", "ban")
+        w = await update_warn(message.chat.id, t.id, delta=1)
         if w >= lim:
             await update_warn(message.chat.id, t.id, reset=True); await _punish(message.bot, message.chat.id, t.id, mode)
             if cmd != "swarn": return await message.answer(f"🔨 {t.full_name} hit {lim}/{lim} warns ({mode})!", parse_mode=None)
@@ -69,7 +70,7 @@ async def warn_cmds(message: Message):
     elif cmd in ("warnlimit", "setwarnlimit") and len(message.text.split()) > 1 and message.text.split()[1].isdigit():
         val = max(1, int(message.text.split()[1])); await set_chat_num(message.chat.id, "warn_limit", val); await message.answer(f"⚙️ Warn limit: **{val}**")
     elif cmd == "warnmode" and len(message.text.split()) > 1 and message.text.split()[1].lower() in ("ban", "mute", "kick"):
-        WARN_MODES[message.chat.id] = message.text.split()[1].lower(); await message.answer(f"⚙️ Warn mode: **{WARN_MODES[message.chat.id]}**")
+        m = message.text.split()[1].lower(); await set_chat_field(message.chat.id, "warn_mode", m); await message.answer(f"⚙️ Warn mode: **{m}**")
 
 
 @router.message(Command("setflood", "antiflood", "floodmode", "flood", "addblocklist", "blacklist", "rmblocklist", "unblacklist", "blocklist", "blacklists", "blocklistmode", prefix="/!"), F.chat.type.in_({"group", "supergroup"}))
@@ -77,7 +78,7 @@ async def flood_bl_cmds(message: Message):
     cmd = message.text.split()[0].lstrip("/!").lower(); p = message.text.split(None, 1)
     if cmd == "flood":
         s = await get_chat_settings(message.chat.id)
-        return await message.answer(f"🌊 Antiflood: `{s.get('flood_limit', 0)} msgs/4s` | Mode: `{FLOOD_MODES.get(message.chat.id, 'mute')}`")
+        return await message.answer(f"🌊 Antiflood: `{s.get('flood_limit', 0)} msgs/4s` | Mode: `{s.get('flood_mode', 'mute')}`")
     if cmd in ("blocklist", "blacklists"):
         words = await get_blacklists(message.chat.id)
         return await message.answer("🚫 **Blocklist:**\n• " + "\n• ".join(words) if words else "Blocklist is empty.")
@@ -87,13 +88,13 @@ async def flood_bl_cmds(message: Message):
         val = 0 if arg in ("off", "no", "0") else (int(arg) if arg.isdigit() else 0)
         await set_chat_num(message.chat.id, "flood_limit", val); await message.answer(f"🌊 Antiflood: **{val} msgs/4s**" if val > 0 else "🌊 Antiflood disabled.")
     elif cmd == "floodmode" and len(p) > 1 and p[1].lower() in ("ban", "mute", "kick"):
-        FLOOD_MODES[message.chat.id] = p[1].lower(); await message.answer(f"🌊 Flood mode: **{p[1].lower()}**")
+        await set_chat_field(message.chat.id, "flood_mode", p[1].lower()); await message.answer(f"🌊 Flood mode: **{p[1].lower()}**")
     elif cmd in ("addblocklist", "blacklist") and len(p) > 1:
         await set_blacklist(message.chat.id, p[1].lower(), True); await message.answer(f"🚫 Added `{p[1].lower()}`!")
     elif cmd in ("rmblocklist", "unblacklist") and len(p) > 1:
         await set_blacklist(message.chat.id, p[1].lower(), False); await message.answer(f"✅ Removed `{p[1].lower()}`!")
     elif cmd == "blocklistmode" and len(p) > 1 and p[1].lower() in ("del", "ban", "mute", "kick"):
-        BL_MODES[message.chat.id] = p[1].lower(); await message.answer(f"🚫 Blocklist mode: **{p[1].lower()}**")
+        await set_chat_field(message.chat.id, "bl_mode", p[1].lower()); await message.answer(f"🚫 Blocklist mode: **{p[1].lower()}**")
 
 
 @router.message(Command("lock", "unlock", "locks", "locktypes", "nightmode", prefix="/!"))
@@ -140,9 +141,10 @@ async def report_cmds(message: Message):
     if message.text.lower().startswith(("/reports", "!reports")):
         if not await _is_adm(message): return
         off = len(message.text.split()) > 1 and message.text.split()[1].lower() in ("off", "no")
-        (REPORTS_OFF.add if off else REPORTS_OFF.discard)(message.chat.id)
+        await set_chat_field(message.chat.id, "reports_on", not off)
         return await message.answer("🔕 Reports OFF." if off else "🔔 Reports ON.")
-    if message.chat.id in REPORTS_OFF or not message.reply_to_message or await _is_adm(message, notify=False): return
+    s = await get_chat_settings(message.chat.id)
+    if not s.get("reports_on", True) or not message.reply_to_message or await _is_adm(message, notify=False): return
     t = message.reply_to_message.from_user
     btn = InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(text="🔨 Ban", callback_data=f"rep_ban_{t.id}_{message.reply_to_message.message_id}"),
@@ -200,7 +202,7 @@ async def util_cmds(message: Message):
     if cmd == "ping": s = time.time(); m = await message.answer("🏓 Pinging..."); return await m.edit_text(f"💓 **Pong!** `{round((time.time() - s) * 1000, 2)}ms`")
     if cmd == "afk":
         rsn = message.text.split(None, 1)[1] if len(message.text.split()) > 1 else "Busy!"
-        AFK_USERS[message.from_user.id] = (time.time(), rsn); return await message.answer(f"💤 {message.from_user.full_name} is AFK: {rsn}", parse_mode=None)
+        await set_afk(message.from_user.id, time.time(), rsn); return await message.answer(f"💤 {message.from_user.full_name} is AFK: {rsn}", parse_mode=None)
     if cmd == "kickme" and message.chat.type in ("group", "supergroup"):
         try: await message.bot.ban_chat_member(message.chat.id, message.from_user.id); await message.bot.unban_chat_member(message.chat.id, message.from_user.id); return await message.answer("👋 Bye!")
         except Exception: return await message.answer("❌ I can't kick you!")
@@ -216,15 +218,13 @@ async def util_cmds(message: Message):
         img = generate_4k_profile(t.first_name, t.id, rank="Member", xp=50, pfp_bytes=pfp)
         return await message.answer_photo(BufferedInputFile(img.getvalue(), filename="info.jpg"), caption=f"👤 {t.full_name}\nID: {t.id} | @{t.username or 'None'}", parse_mode=None)
     if cmd in ("connect", "disconnect", "reconnect", "connection"):
-        uid = message.from_user.id
-        if cmd == "disconnect":
-            if uid in USER_CONNECTED: LAST_CONNECTED[uid] = USER_CONNECTED.pop(uid)
-            return await message.answer("🔌 Disconnected.")
-        if cmd == "reconnect" and uid in LAST_CONNECTED: USER_CONNECTED[uid] = LAST_CONNECTED[uid]; return await message.answer(f"🔗 Reconnected to `{USER_CONNECTED[uid]}`!")
-        if cmd == "connection": return await message.answer(f"🔗 Connected: `{USER_CONNECTED.get(uid)}`")
-        if message.chat.type != "private": USER_CONNECTED[uid] = message.chat.id; return await message.answer("🔗 Connected!")
+        uid, c = message.from_user.id, await get_connection(message.from_user.id)
+        if cmd == "disconnect": await set_connection(uid, None); return await message.answer("🔌 Disconnected.")
+        if cmd == "reconnect" and c.get("last_chat_id"): await set_connection(uid, c["last_chat_id"]); return await message.answer(f"🔗 Reconnected to `{c['last_chat_id']}`!")
+        if cmd == "connection": return await message.answer(f"🔗 Connected: `{c.get('chat_id')}`")
+        if message.chat.type != "private": await set_connection(uid, message.chat.id); return await message.answer("🔗 Connected!")
         p = message.text.split()
-        if len(p) > 1 and p[1].lstrip("-").isdigit(): USER_CONNECTED[uid] = int(p[1]); return await message.answer(f"🔗 Connected to `{p[1]}`!")
+        if len(p) > 1 and p[1].lstrip("-").isdigit(): await set_connection(uid, int(p[1])); return await message.answer(f"🔗 Connected to `{p[1]}`!")
     if message.chat.type not in ("group", "supergroup"): return
     if cmd == "rules": r = await get_rules(message.chat.id); return await message.answer(f"📜 **Rules:**\n\n{r}" if r else "No rules set!")
     if cmd == "notes": ns = await get_notes(message.chat.id); return await message.answer("📝 **Notes:** " + ", ".join(ns) if ns else "No notes.")
@@ -240,19 +240,21 @@ async def util_cmds(message: Message):
 async def security_watcher(message: Message):
     if not message.from_user or message.from_user.is_bot: raise SkipHandler()
     cid, uid, txt = message.chat.id, message.from_user.id, (message.text or message.caption or "")
-    if uid in AFK_USERS:
-        AFK_USERS.pop(uid, None); await message.answer(f"🌸 Welcome back, {message.from_user.full_name}!", parse_mode=None)
-    elif message.reply_to_message and message.reply_to_message.from_user and message.reply_to_message.from_user.id in AFK_USERS:
-        await message.answer(f"💤 {message.reply_to_message.from_user.first_name} is AFK: {AFK_USERS[message.reply_to_message.from_user.id][1]}", parse_mode=None)
+    if await get_afk(uid):
+        await set_afk(uid, None); await message.answer(f"🌸 Welcome back, {message.from_user.full_name}!", parse_mode=None)
+    elif message.reply_to_message and message.reply_to_message.from_user:
+        if rsn := await get_afk(message.reply_to_message.from_user.id):
+            await message.answer(f"💤 {message.reply_to_message.from_user.first_name} is AFK: {rsn}", parse_mode=None)
     if txt:
         for kw, rep in (await get_filters(cid)).items():
             if kw in txt.lower(): await message.reply(rep, parse_mode=None); break
     if await _is_adm(message, notify=False) or await is_approved(cid, uid): raise SkipHandler()
-    fl = (await get_chat_settings(cid)).get("flood_limit", 0)
+    s = await get_chat_settings(cid)
+    fl = s.get("flood_limit", 0)
     if fl > 0:
         now = time.time(); ts = [t for t in FLOOD_TRACKER.get((cid, uid), []) if now - t < 4] + [now]; FLOOD_TRACKER[(cid, uid)] = ts
         if len(ts) > fl:
-            FLOOD_TRACKER[(cid, uid)] = []; await _punish(message.bot, cid, uid, FLOOD_MODES.get(cid, "mute"))
+            FLOOD_TRACKER[(cid, uid)] = []; await _punish(message.bot, cid, uid, s.get("flood_mode", "mute"))
             return await message.answer(f"🌊 {message.from_user.full_name} punished for flooding!", parse_mode=None)
     if txt:
         low = txt.lower()
@@ -260,7 +262,7 @@ async def security_watcher(message: Message):
             if re.search(re.escape(w).replace(r"\*", ".*"), low):
                 try: await message.delete()
                 except Exception: pass
-                await _punish(message.bot, cid, uid, BL_MODES.get(cid, "del")); return
+                await _punish(message.bot, cid, uid, s.get("bl_mode", "del")); return
     locks = await get_locks(cid)
     if locks and (
         "all" in locks or ("stickers" in locks and message.sticker) or ("gif" in locks and message.animation)
