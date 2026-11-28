@@ -3,14 +3,12 @@ from aiogram import Router, F
 from aiogram.filters import Command
 from aiogram.types import Message, CallbackQuery, ChatJoinRequest, ChatPermissions, InlineKeyboardMarkup, InlineKeyboardButton
 from RUKA.utils.db import (
-    get_pool, get_chat_settings, toggle_setting, add_filter, remove_filter, get_filters,
-    disable_cmd, enable_cmd, get_disabled_cmds, get_chat_fed, is_fbanned, get_log_channel
+    get_pool, get_chat_settings, toggle_setting, set_chat_field, add_filter, remove_filter,
+    get_filters, disable_cmd, enable_cmd, get_disabled_cmds, get_chat_fed, is_fbanned, get_log_channel
 )
 
 router = Router()
 PENDING_CAPTCHA: set[tuple[int, int]] = set()
-CAPTCHA_MODES: dict[int, str] = {}
-AUTO_APPROVE: set[int] = set()
 
 
 async def _is_adm(m: Message, notify: bool = True) -> bool:
@@ -36,7 +34,6 @@ def _settings_markup(s: dict) -> InlineKeyboardMarkup:
     ])
 
 
-# --- 1. /settings Panel ---
 @router.message(Command("settings", prefix="/!"), F.chat.type.in_({"group", "supergroup"}))
 async def settings_panel(message: Message):
     if not await _is_adm(message): return
@@ -59,7 +56,6 @@ async def settings_callbacks(query: CallbackQuery):
         except Exception: pass
 
 
-# --- 2. Quick Toggles, CAPTCHA Mode & Join Requests ---
 @router.message(Command("captcha", "antiraid", "cleanservice", "cleancommand", prefix="/!"), F.chat.type.in_({"group", "supergroup"}))
 async def quick_toggle_cmd(message: Message):
     if not await _is_adm(message): return
@@ -73,8 +69,8 @@ async def captchamode_cmd(message: Message):
     if not await _is_adm(message): return
     p = message.text.split()
     if len(p) > 1 and p[1].lower() in ("button", "math"):
-        CAPTCHA_MODES[message.chat.id] = p[1].lower()
-        return await message.answer(f"🛡️ CAPTCHA mode set to **{p[1].lower()}**!")
+        await set_chat_field(message.chat.id, "captcha_mode", p[1].lower())
+        return await message.answer(f"🛡️ CAPTCHA mode saved as **{p[1].lower()}**!")
     await message.answer("Usage: `/captchamode button` or `/captchamode math`")
 
 
@@ -82,9 +78,9 @@ async def captchamode_cmd(message: Message):
 async def autoapprove_cmd(message: Message):
     if not await _is_adm(message): return
     p = message.text.split()
-    if len(p) > 1 and p[1].lower() in ("off", "no"):
-        AUTO_APPROVE.discard(message.chat.id); return await message.answer("🚪 Join Request Auto-Approve: **OFF ❌**")
-    AUTO_APPROVE.add(message.chat.id); await message.answer("🚪 Join Request Auto-Approve: **ON ✅**")
+    off = len(p) > 1 and p[1].lower() in ("off", "no")
+    await set_chat_field(message.chat.id, "auto_approve", not off)
+    await message.answer("🚪 Join Request Auto-Approve: **OFF ❌**" if off else "🚪 Join Request Auto-Approve: **ON ✅**")
 
 
 @router.chat_join_request()
@@ -92,10 +88,9 @@ async def handle_join_req(req: ChatJoinRequest):
     cid = req.chat.id
     if fed_id := await get_chat_fed(cid):
         if await is_fbanned(fed_id, req.from_user.id): return await req.decline()
-    if cid in AUTO_APPROVE: await req.approve()
+    if (await get_chat_settings(cid)).get("auto_approve"): await req.approve()
 
 
-# --- 3. Forum Topic Management ---
 @router.message(Command("newtopic", "closetopic", "reopentopic", prefix="/!"), F.chat.type.in_({"group", "supergroup"}))
 async def topic_cmds(message: Message):
     if not await _is_adm(message): return
@@ -109,11 +104,9 @@ async def topic_cmds(message: Message):
         if not message.message_thread_id: return await message.answer("❌ Run this inside a Forum Topic!")
         if cmd == "closetopic": await message.bot.close_forum_topic(message.chat.id, message.message_thread_id); await message.answer("🔒 Topic closed!")
         else: await message.bot.reopen_forum_topic(message.chat.id, message.message_thread_id); await message.answer("🔓 Topic reopened!")
-    except Exception as e:
-        await message.answer(f"❌ Topic action failed: {e}", parse_mode=None)
+    except Exception as e: await message.answer(f"❌ Topic failed: {e}", parse_mode=None)
 
 
-# --- 4. Join Handler: Fed-Ban + Anti-Raid + Button/Math CAPTCHA ---
 @router.message(F.new_chat_members)
 async def on_user_join(message: Message):
     cid = message.chat.id
@@ -121,13 +114,11 @@ async def on_user_join(message: Message):
     if s.get("cleanservice"):
         try: await message.delete()
         except Exception: pass
-    fed_id, mode = await get_chat_fed(cid), CAPTCHA_MODES.get(cid, "button")
+    fed_id, mode = await get_chat_fed(cid), s.get("captcha_mode", "button")
     for user in message.new_chat_members:
         if user.is_bot: continue
         if fed_id and (reason := await is_fbanned(fed_id, user.id)):
-            try:
-                await message.bot.ban_chat_member(cid, user.id)
-                await message.answer(f"🌐 Fed-Banned User Blocked: {user.full_name} ({reason})", parse_mode=None)
+            try: await message.bot.ban_chat_member(cid, user.id); await message.answer(f"🌐 Fed-Banned Blocked: {user.full_name} ({reason})", parse_mode=None)
             except Exception: pass
             continue
         if s.get("antiraid"):
