@@ -184,3 +184,25 @@ def generate_shop_banner(user_name: str, coins: int, ruka_bytes: BytesIO = None)
         y += 86
 
     return _export(bg, "shop.jpg")
+def generate_waifushop_banner(coins: int, items: list[dict], rem_str: str, ruka_bytes: BytesIO = None) -> BytesIO:
+    bg = _base_canvas(accent=(255, 105, 180, 220))
+    d = ImageDraw.Draw(bg)
+    d.text((75, 84), "12H EXCLUSIVE WAIFU SHOP", font=_font(34), fill=(255, 182, 193, 255), anchor="lm")
+    d.text((1200, 84), f"RESETS IN {rem_str}  |  {coins} C", font=_font(26), fill=(255, 215, 100, 255), anchor="rm")
+
+    if ruka_bytes:
+        rp = _circle_pfp(ruka_bytes, size=230, ring=(255, 105, 180, 255))
+        bg.paste(rp, (1040 - rp.width // 2, 340 - rp.height // 2), rp)
+        d.text((1040, 485), "Shopkeeper Ruka", font=_font(24), fill=(255, 182, 193, 255), anchor="mm")
+        d.text((1040, 520), "Limited Rotation", font=_font(20), fill=(173, 216, 230, 255), anchor="mm")
+
+    y = 185
+    for it in items:
+        d.rounded_rectangle((75, y, 830, y + 115), radius=16, fill=(34, 40, 68, 255), outline=(255, 105, 180, 160), width=2)
+        d.text((100, y + 38), _clean(it["name"])[:22], font=_font(32), fill=(255, 255, 255, 255), anchor="lm")
+        d.text((100, y + 80), f"{_clean(it['anime'])}  •  {it['power']} PWR", font=_font(22), fill=(180, 210, 245, 255), anchor="lm")
+        d.text((805, y + 40), f"{it['price']} C", font=_font(30), fill=(255, 215, 100, 255), anchor="rm")
+        d.text((805, y + 80), _clean(it["rarity"]).upper(), font=_font(20), fill=(255, 182, 193, 255), anchor="rm")
+        y += 135
+
+    return _export(bg, "waifushop.jpg")
