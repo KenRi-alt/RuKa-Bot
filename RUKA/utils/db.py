@@ -11,8 +11,7 @@ def _clean_db_url(url: str) -> str:
     valid_ssl = {"disable", "allow", "prefer", "require", "verify-ca", "verify-full"}
     if "sslmode" in qs and qs["sslmode"][0] not in valid_ssl:
         qs["sslmode"] = ["require"]
-    new_query = urllib.parse.urlencode(qs, doseq=True)
-    return urllib.parse.urlunparse(parsed._replace(query=new_query))
+    return urllib.parse.urlunparse(parsed._replace(query=urllib.parse.urlencode(qs, doseq=True)))
 
 
 async def get_pool():
@@ -21,31 +20,33 @@ async def get_pool():
         _POOL = await asyncpg.create_pool(_clean_db_url(CONFIG.DB_URL), min_size=1, max_size=10)
         async with _POOL.acquire() as conn:
             await conn.execute("""
-                CREATE TABLE IF NOT EXISTS bot_config (
-                    key TEXT PRIMARY KEY, value TEXT
-                );
-                CREATE TABLE IF NOT EXISTS bot_staff (
-                    user_id BIGINT PRIMARY KEY, role TEXT
-                );
-                CREATE TABLE IF NOT EXISTS global_bans (
-                    user_id BIGINT PRIMARY KEY, reason TEXT DEFAULT 'Global Ban'
-                );
-                CREATE TABLE IF NOT EXISTS bot_bans (
-                    user_id BIGINT PRIMARY KEY, reason TEXT DEFAULT 'Banned from bot'
-                );
+                CREATE TABLE IF NOT EXISTS bot_config (key TEXT PRIMARY KEY, value TEXT);
+                CREATE TABLE IF NOT EXISTS bot_staff (user_id BIGINT PRIMARY KEY, role TEXT);
+                CREATE TABLE IF NOT EXISTS global_bans (user_id BIGINT PRIMARY KEY, reason TEXT DEFAULT 'Global Ban');
+                CREATE TABLE IF NOT EXISTS bot_bans (user_id BIGINT PRIMARY KEY, reason TEXT DEFAULT 'Banned from bot');
+
                 CREATE TABLE IF NOT EXISTS chat_settings (
                     chat_id BIGINT PRIMARY KEY,
                     captcha BOOLEAN DEFAULT FALSE, welcome BOOLEAN DEFAULT TRUE,
                     antilink BOOLEAN DEFAULT FALSE, nightmode BOOLEAN DEFAULT FALSE,
                     antiraid BOOLEAN DEFAULT FALSE, cleanservice BOOLEAN DEFAULT FALSE,
                     cleancommand BOOLEAN DEFAULT FALSE, warn_limit INTEGER DEFAULT 3,
-                    flood_limit INTEGER DEFAULT 0
+                    flood_limit INTEGER DEFAULT 0, warn_mode TEXT DEFAULT 'ban',
+                    flood_mode TEXT DEFAULT 'mute', bl_mode TEXT DEFAULT 'del',
+                    reports_on BOOLEAN DEFAULT TRUE, captcha_mode TEXT DEFAULT 'button',
+                    auto_approve BOOLEAN DEFAULT FALSE
                 );
                 ALTER TABLE chat_settings ADD COLUMN IF NOT EXISTS antiraid BOOLEAN DEFAULT FALSE;
                 ALTER TABLE chat_settings ADD COLUMN IF NOT EXISTS cleanservice BOOLEAN DEFAULT FALSE;
                 ALTER TABLE chat_settings ADD COLUMN IF NOT EXISTS cleancommand BOOLEAN DEFAULT FALSE;
                 ALTER TABLE chat_settings ADD COLUMN IF NOT EXISTS warn_limit INTEGER DEFAULT 3;
                 ALTER TABLE chat_settings ADD COLUMN IF NOT EXISTS flood_limit INTEGER DEFAULT 0;
+                ALTER TABLE chat_settings ADD COLUMN IF NOT EXISTS warn_mode TEXT DEFAULT 'ban';
+                ALTER TABLE chat_settings ADD COLUMN IF NOT EXISTS flood_mode TEXT DEFAULT 'mute';
+                ALTER TABLE chat_settings ADD COLUMN IF NOT EXISTS bl_mode TEXT DEFAULT 'del';
+                ALTER TABLE chat_settings ADD COLUMN IF NOT EXISTS reports_on BOOLEAN DEFAULT TRUE;
+                ALTER TABLE chat_settings ADD COLUMN IF NOT EXISTS captcha_mode TEXT DEFAULT 'button';
+                ALTER TABLE chat_settings ADD COLUMN IF NOT EXISTS auto_approve BOOLEAN DEFAULT FALSE;
 
                 CREATE TABLE IF NOT EXISTS chat_filters (chat_id BIGINT, keyword TEXT, reply TEXT, PRIMARY KEY (chat_id, keyword));
                 CREATE TABLE IF NOT EXISTS chat_locks (chat_id BIGINT, lock_type TEXT, PRIMARY KEY (chat_id, lock_type));
@@ -56,16 +57,22 @@ async def get_pool():
                 CREATE TABLE IF NOT EXISTS approved_users (chat_id BIGINT, user_id BIGINT, PRIMARY KEY (chat_id, user_id));
                 CREATE TABLE IF NOT EXISTS disabled_cmds (chat_id BIGINT, cmd TEXT, PRIMARY KEY (chat_id, cmd));
                 CREATE TABLE IF NOT EXISTS log_channels (chat_id BIGINT PRIMARY KEY, log_id BIGINT);
+                CREATE TABLE IF NOT EXISTS user_connections (user_id BIGINT PRIMARY KEY, chat_id BIGINT, last_chat_id BIGINT);
+                CREATE TABLE IF NOT EXISTS afk_users (user_id BIGINT PRIMARY KEY, since DOUBLE PRECISION, reason TEXT);
                 CREATE TABLE IF NOT EXISTS federations (fed_id TEXT PRIMARY KEY, fed_name TEXT, owner_id BIGINT);
                 CREATE TABLE IF NOT EXISTS fed_chats (chat_id BIGINT PRIMARY KEY, fed_id TEXT);
                 CREATE TABLE IF NOT EXISTS fed_bans (fed_id TEXT, user_id BIGINT, reason TEXT, PRIMARY KEY (fed_id, user_id));
                 CREATE TABLE IF NOT EXISTS marriage_data (user_id BIGINT PRIMARY KEY, partner_id BIGINT, marriage_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
                 CREATE TABLE IF NOT EXISTS family_data (user_id BIGINT, relative_id BIGINT, relation_type TEXT, PRIMARY KEY (user_id, relative_id));
                 CREATE TABLE IF NOT EXISTS user_profile (user_id BIGINT PRIMARY KEY, gender TEXT DEFAULT 'Not Set', bio TEXT DEFAULT 'No bio set.');
+
                 CREATE TABLE IF NOT EXISTS gacha_collection (
-                    card_id SERIAL PRIMARY KEY, user_id BIGINT, card_name TEXT, char_type TEXT,
-                    anime TEXT, rarity TEXT, power INTEGER, image_url TEXT
+                    card_id SERIAL PRIMARY KEY, user_id BIGINT, card_name TEXT, char_type TEXT DEFAULT 'Waifu',
+                    anime TEXT DEFAULT 'Anime', rarity TEXT, power INTEGER, image_url TEXT
                 );
+                ALTER TABLE gacha_collection ADD COLUMN IF NOT EXISTS char_type TEXT DEFAULT 'Waifu';
+                ALTER TABLE gacha_collection ADD COLUMN IF NOT EXISTS anime TEXT DEFAULT 'Anime';
+
                 CREATE TABLE IF NOT EXISTS user_stats (
                     user_id BIGINT PRIMARY KEY, coins INTEGER DEFAULT 100, xp INTEGER DEFAULT 0, last_daily DOUBLE PRECISION DEFAULT 0
                 );
@@ -75,14 +82,12 @@ async def get_pool():
     return _POOL
 
 
-# --- Bot Global Config, Staff, GBans & BotBans ---
+# --- Global Config, Staff, GBans, BotBans ---
 async def set_bot_config(key: str, value: str | None):
     pool = await get_pool()
     async with pool.acquire() as conn:
-        if value is None:
-            await conn.execute("DELETE FROM bot_config WHERE key=$1", key)
-        else:
-            await conn.execute("INSERT INTO bot_config VALUES ($1,$2) ON CONFLICT (key) DO UPDATE SET value=$2", key, value)
+        if value is None: await conn.execute("DELETE FROM bot_config WHERE key=$1", key)
+        else: await conn.execute("INSERT INTO bot_config VALUES ($1,$2) ON CONFLICT (key) DO UPDATE SET value=$2", key, value)
 
 
 async def get_bot_config(key: str, default: str = None) -> str | None:
@@ -95,10 +100,8 @@ async def get_bot_config(key: str, default: str = None) -> str | None:
 async def set_staff(uid: int, role: str | None):
     pool = await get_pool()
     async with pool.acquire() as conn:
-        if role is None:
-            await conn.execute("DELETE FROM bot_staff WHERE user_id=$1", uid)
-        else:
-            await conn.execute("INSERT INTO bot_staff VALUES ($1,$2) ON CONFLICT (user_id) DO UPDATE SET role=$2", uid, role)
+        if role is None: await conn.execute("DELETE FROM bot_staff WHERE user_id=$1", uid)
+        else: await conn.execute("INSERT INTO bot_staff VALUES ($1,$2) ON CONFLICT (user_id) DO UPDATE SET role=$2", uid, role)
 
 
 async def get_all_staff() -> dict[int, str]:
@@ -110,10 +113,8 @@ async def get_all_staff() -> dict[int, str]:
 async def set_gban(uid: int, reason: str | None):
     pool = await get_pool()
     async with pool.acquire() as conn:
-        if reason is None:
-            await conn.execute("DELETE FROM global_bans WHERE user_id=$1", uid)
-        else:
-            await conn.execute("INSERT INTO global_bans VALUES ($1,$2) ON CONFLICT (user_id) DO UPDATE SET reason=$2", uid, reason)
+        if reason is None: await conn.execute("DELETE FROM global_bans WHERE user_id=$1", uid)
+        else: await conn.execute("INSERT INTO global_bans VALUES ($1,$2) ON CONFLICT (user_id) DO UPDATE SET reason=$2", uid, reason)
 
 
 async def is_gbanned(uid: int) -> str | None:
@@ -131,10 +132,8 @@ async def get_all_gbans() -> list[dict]:
 async def set_botban(uid: int, reason: str | None):
     pool = await get_pool()
     async with pool.acquire() as conn:
-        if reason is None:
-            await conn.execute("DELETE FROM bot_bans WHERE user_id=$1", uid)
-        else:
-            await conn.execute("INSERT INTO bot_bans VALUES ($1,$2) ON CONFLICT (user_id) DO UPDATE SET reason=$2", uid, reason)
+        if reason is None: await conn.execute("DELETE FROM bot_bans WHERE user_id=$1", uid)
+        else: await conn.execute("INSERT INTO bot_bans VALUES ($1,$2) ON CONFLICT (user_id) DO UPDATE SET reason=$2", uid, reason)
 
 
 async def is_botbanned(uid: int) -> str | None:
@@ -143,14 +142,14 @@ async def is_botbanned(uid: int) -> str | None:
         return await conn.fetchval("SELECT reason FROM bot_bans WHERE user_id=$1", uid)
 
 
-# --- Settings, Locks, Warns, Rules, Notes ---
+# --- Settings, Modes, Connections, AFK ---
 async def get_chat_settings(chat_id: int) -> dict:
     pool = await get_pool()
     async with pool.acquire() as conn:
         row = await conn.fetchrow("SELECT * FROM chat_settings WHERE chat_id=$1", chat_id)
         if not row:
             await conn.execute("INSERT INTO chat_settings (chat_id) VALUES ($1) ON CONFLICT DO NOTHING", chat_id)
-            return {"captcha": False, "welcome": True, "antilink": False, "nightmode": False, "antiraid": False, "cleanservice": False, "cleancommand": False, "warn_limit": 3, "flood_limit": 0}
+            row = await conn.fetchrow("SELECT * FROM chat_settings WHERE chat_id=$1", chat_id)
         return dict(row)
 
 
@@ -163,13 +162,47 @@ async def toggle_setting(chat_id: int, key: str) -> bool:
     return val
 
 
-async def set_chat_num(chat_id: int, key: str, val: int):
+async def set_chat_field(chat_id: int, key: str, val):
     await get_chat_settings(chat_id)
     pool = await get_pool()
     async with pool.acquire() as conn:
         await conn.execute(f"UPDATE chat_settings SET {key}=$1 WHERE chat_id=$2", val, chat_id)
 
 
+async def set_chat_num(chat_id: int, key: str, val: int):
+    await set_chat_field(chat_id, key, val)
+
+
+async def set_connection(uid: int, cid: int | None):
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        if cid is None:
+            await conn.execute("UPDATE user_connections SET last_chat_id=chat_id, chat_id=NULL WHERE user_id=$1", uid)
+        else:
+            await conn.execute("INSERT INTO user_connections (user_id, chat_id) VALUES ($1,$2) ON CONFLICT (user_id) DO UPDATE SET chat_id=$2", uid, cid)
+
+
+async def get_connection(uid: int) -> dict:
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow("SELECT chat_id, last_chat_id FROM user_connections WHERE user_id=$1", uid)
+        return dict(row) if row else {"chat_id": None, "last_chat_id": None}
+
+
+async def set_afk(uid: int, since: float | None, reason: str = ""):
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        if since is None: await conn.execute("DELETE FROM afk_users WHERE user_id=$1", uid)
+        else: await conn.execute("INSERT INTO afk_users VALUES ($1,$2,$3) ON CONFLICT (user_id) DO UPDATE SET since=$2, reason=$3", uid, since, reason)
+
+
+async def get_afk(uid: int) -> str | None:
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        return await conn.fetchval("SELECT reason FROM afk_users WHERE user_id=$1", uid)
+
+
+# --- Filters, Locks, Blacklists, Warns, Rules, Notes ---
 async def add_filter(chat_id: int, kw: str, reply: str):
     pool = await get_pool()
     async with pool.acquire() as conn:
@@ -217,9 +250,7 @@ async def get_blacklists(chat_id: int) -> set[str]:
 async def update_warn(chat_id: int, user_id: int, delta: int = 1, reset: bool = False) -> int:
     pool = await get_pool()
     async with pool.acquire() as conn:
-        if reset:
-            await conn.execute("DELETE FROM chat_warns WHERE chat_id=$1 AND user_id=$2", chat_id, user_id)
-            return 0
+        if reset: await conn.execute("DELETE FROM chat_warns WHERE chat_id=$1 AND user_id=$2", chat_id, user_id); return 0
         cur = await conn.fetchval("SELECT count FROM chat_warns WHERE chat_id=$1 AND user_id=$2", chat_id, user_id) or 0
         new_val = max(0, cur + delta)
         await conn.execute("INSERT INTO chat_warns VALUES ($1,$2,$3) ON CONFLICT (chat_id,user_id) DO UPDATE SET count=$3", chat_id, user_id, new_val)
@@ -425,10 +456,12 @@ async def get_profile(uid: int) -> dict:
 async def add_gacha_card(uid: int, name: str, char_type: str, anime: str, rarity: str, power: int, url: str) -> int:
     pool = await get_pool()
     async with pool.acquire() as conn:
-        return await conn.fetchval(
-            "INSERT INTO gacha_collection (user_id, card_name, char_type, anime, rarity, power, image_url) "
-            "VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING card_id", uid, name, char_type, anime, rarity, power, url
+        next_id = (await conn.fetchval("SELECT COALESCE(MAX(card_id), 0) FROM gacha_collection")) + 1
+        await conn.execute(
+            "INSERT INTO gacha_collection (card_id, user_id, card_name, char_type, anime, rarity, power, image_url) "
+            "VALUES ($1,$2,$3,$4,$5,$6,$7,$8)", next_id, uid, name, char_type, anime, rarity, power, url
         )
+        return next_id
 
 
 async def get_user_cards(uid: int) -> list[dict]:
