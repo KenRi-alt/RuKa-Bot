@@ -1,34 +1,53 @@
-import random, aiohttp
+import time, random, aiohttp
 from io import BytesIO
 from aiogram import Router, F
 from aiogram.filters import Command
-from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, BufferedInputFile
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from RUKA.utils.db import (
     set_marriage, get_partner, remove_marriage, add_relation, remove_relation,
     runaway_family, get_family, set_profile, get_profile,
     add_gacha_card, get_user_cards, get_user_stats, update_user_stats, get_inventory
 )
-from RUKA.utils.image_gen import generate_4k_anime_card, generate_family_tree
+from RUKA.utils.image_gen import generate_family_tree
+from aiogram.types import BufferedInputFile
 
 router = Router()
 
+# --- HIGH-QUALITY CURATED CHARACTER POOLS ---
 WAIFU_POOL = [
     ("Ruka Sarashina", "ruka_sarashina", "Rent-a-Girlfriend"),
+    ("Emilia", "emilia_(re:zero)", "Re:Zero"),
+    ("Rem", "rem_(re:zero)", "Re:Zero"),
     ("Zero Two", "zero_two_(darling_in_the_franxx)", "Darling in the FranXX"),
     ("Makima", "makima_(chainsaw_man)", "Chainsaw Man"),
     ("Marin Kitagawa", "kitagawa_marin", "My Dress-Up Darling"),
-    ("Rem", "rem_(re:zero)", "Re:Zero"),
-    ("Mikasa Ackerman", "mikasa_ackerman", "Attack on Titan"),
-    ("Asuna Yuuki", "asuna_(sao)", "Sword Art Online"),
     ("Yor Forger", "yor_forger", "Spy x Family"),
+    ("Raiden Shogun", "raiden_shogun", "Genshin Impact"),
+    ("Hu Tao", "hu_tao_(genshin_impact)", "Genshin Impact"),
+    ("Mitsuri Kanroji", "kanroji_mitsuri", "Demon Slayer"),
+    ("Shinobu Kocho", "kochou_shinobu", "Demon Slayer"),
+    ("Mai Sakurajima", "sakurajima_mai", "Bunny Girl Senpai"),
+    ("Asuna Yuuki", "asuna_(sao)", "Sword Art Online"),
+    ("Esdeath", "esdeath", "Akame ga Kill!"),
+    ("Frieren", "frieren", "Sousou no Frieren"),
 ]
 HUSBANDO_POOL = [
     ("Satoru Gojo", "gojo_satoru", "Jujutsu Kaisen"),
     ("Levi Ackerman", "levi_ackerman", "Attack on Titan"),
     ("Megumi Fushiguro", "fushiguro_megumi", "Jujutsu Kaisen"),
+    ("Roronoa Zoro", "roronoa_zoro", "One Piece"),
     ("Loid Forger", "loid_forger", "Spy x Family"),
     ("Killua Zoldyck", "killua_zoldyck", "Hunter x Hunter"),
-    ("Roronoa Zoro", "roronoa_zoro", "One Piece"),
+    ("Sung Jin-Woo", "sung_jin-woo", "Solo Leveling"),
+]
+
+# Rarity Tiers: (Label, Emoji, Weight, Power Range)
+RARITIES = [
+    ("Common", "⚪", 50, (1000, 2200)),
+    ("Rare", "🔵", 28, (2300, 3800)),
+    ("Epic", "🟣", 14, (4000, 5800)),
+    ("Mythical", "🔴", 6, (6200, 8200)),
+    ("Legendary", "🟡", 2, (8500, 9999)),
 ]
 
 
@@ -37,15 +56,6 @@ async def _fetch_json(url: str):
         async with aiohttp.ClientSession() as s:
             async with s.get(url, timeout=10) as r:
                 if r.status == 200: return await r.json()
-    except Exception: pass
-    return None
-
-
-async def _fetch_bytes(url: str) -> BytesIO | None:
-    try:
-        async with aiohttp.ClientSession() as s:
-            async with s.get(url, timeout=15) as r:
-                if r.status == 200: d = BytesIO(await r.read()); d.seek(0); return d
     except Exception: pass
     return None
 
@@ -61,11 +71,9 @@ async def _get_pfp(bot, uid: int) -> BytesIO | None:
 
 
 async def _existing_rel(u1: int, u2: int) -> str | None:
-    if await get_partner(u1) == u2:
-        return "Spouse"
+    if await get_partner(u1) == u2: return "Spouse"
     for f in await get_family(u1):
-        if f["relative_id"] == u2:
-            return f["relation_type"]
+        if f["relative_id"] == u2: return f["relation_type"]
     return None
 
 
@@ -103,35 +111,25 @@ async def gif_reaction_cmd(message: Message):
     await (message.answer_animation(url, caption=cap, parse_mode=None) if url.endswith(".gif") else message.answer_photo(url, caption=cap, parse_mode=None))
 
 
-# --- 2. MARRIAGE & FAMILY (Anti-Duplicate + Bidirectional + Consent) ---
+# --- 2. MARRIAGE & FAMILY ---
 @router.message(Command("marry", prefix="/!"))
 async def marry_cmd(message: Message):
-    if not message.reply_to_message or not message.reply_to_message.from_user:
-        return await message.answer("💍 Reply to someone to propose!")
+    if not message.reply_to_message or not message.reply_to_message.from_user: return await message.answer("💍 Reply to propose!")
     u, t = message.from_user, message.reply_to_message.from_user
-    if t.id == u.id or t.is_bot: return await message.answer("❌ You can't marry yourself or a bot!")
-    if await get_partner(u.id): return await message.answer("❌ You are already married! Use `/divorce` first.")
+    if t.id == u.id or t.is_bot: return await message.answer("❌ Can't marry yourself or a bot!")
+    if await get_partner(u.id): return await message.answer("❌ You are already married!")
     if await get_partner(t.id): return await message.answer(f"❌ {t.full_name} is already married!", parse_mode=None)
-    if rel := await _existing_rel(u.id, t.id):
-        return await message.answer(f"❌ Ew, {t.full_name} is already your **{rel}**!", parse_mode=None)
-
-    btn = InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text="💍 Accept", callback_data=f"m_acc_{t.id}_{u.id}"),
-        InlineKeyboardButton(text="💔 Reject", callback_data=f"m_rej_{t.id}")
-    ]])
-    await message.answer(f"💍 {u.full_name} is proposing to {t.full_name}!", reply_markup=btn, parse_mode=None)
+    if rel := await _existing_rel(u.id, t.id): return await message.answer(f"❌ Already **{rel}**!", parse_mode=None)
+    btn = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="💍 Accept", callback_data=f"m_acc_{t.id}_{u.id}"), InlineKeyboardButton(text="💔 Reject", callback_data=f"m_rej_{t.id}")]])
+    await message.answer(f"💍 {u.full_name} proposes to {t.full_name}!", reply_markup=btn, parse_mode=None)
 
 
 @router.callback_query(F.data.startswith("m_"))
 async def marriage_cb(query: CallbackQuery):
-    p = query.data.split("_")
-    act, tid = p[1], int(p[2])
+    p = query.data.split("_"); act, tid = p[1], int(p[2])
     if query.from_user.id != tid: return await query.answer("❌ Not for you!", show_alert=True)
-    if act == "acc":
-        await set_marriage(int(p[3]), tid)
-        await query.message.edit_text(f"💖 It's Official! {query.from_user.full_name} is now married! 🌸", parse_mode=None)
-    else:
-        await query.message.edit_text("💔 Proposal rejected. 😭")
+    if act == "acc": await set_marriage(int(p[3]), tid); await query.message.edit_text(f"💖 Official! {query.from_user.full_name} is married! 🌸", parse_mode=None)
+    else: await query.message.edit_text("💔 Proposal rejected. 😭")
     await query.answer()
 
 
@@ -140,78 +138,56 @@ async def partner_cmds(message: Message):
     cmd = message.text.split()[0].lstrip("/!").lower()
     if cmd == "divorce":
         if not await get_partner(message.from_user.id): return await message.answer("❌ You aren't married!")
-        await remove_marriage(message.from_user.id)
-        return await message.answer("💔 Divorced. The bond has ended...")
+        await remove_marriage(message.from_user.id); return await message.answer("💔 Divorced.")
     t = message.reply_to_message.from_user if message.reply_to_message else message.from_user
     pid = await get_partner(t.id)
     await message.answer(f"💞 {t.full_name}'s Partner ID: {pid}" if pid else f"🔎 {t.full_name} is single.", parse_mode=None)
 
 
 REL_MAP = {
-    "adopt": ("Child", "Parent", "🏠 {u} wants to adopt {t} as their Child!"),
-    "sibling": ("Sibling", "Sibling", "👫 {u} wants to make {t} their Sibling!"),
-    "makemom": ("Mom", "Child", "👩 {u} wants {t} to be their Mom!"),
-    "makedad": ("Dad", "Child", "👨 {u} wants {t} to be their Dad!"),
-    "cousin": ("Cousin", "Cousin", "🤝 {u} wants to add {t} as their Cousin!"),
-    "pet": ("Pet", "Owner", "🐶 {u} wants to adopt {t} as the family Pet!"),
+    "adopt": ("Child", "Parent", "🏠 {u} wants to adopt {t}!"),
+    "sibling": ("Sibling", "Sibling", "👫 {u} wants {t} as their Sibling!"),
+    "makemom": ("Mom", "Child", "👩 {u} wants {t} as their Mom!"),
+    "makedad": ("Dad", "Child", "👨 {u} wants {t} as their Dad!"),
+    "cousin": ("Cousin", "Cousin", "🤝 {u} wants {t} as their Cousin!"),
+    "pet": ("Pet", "Owner", "🐶 {u} wants {t} as the family Pet!"),
 }
 
 
 @router.message(Command(*REL_MAP.keys(), prefix="/!"))
 async def family_request_cmd(message: Message):
-    if not message.reply_to_message or not message.reply_to_message.from_user:
-        return await message.answer("Reply to someone to send a family request!")
-    cmd = message.text.split()[0].lstrip("/!").lower()
-    u, t = message.from_user, message.reply_to_message.from_user
-    if t.id == u.id or t.is_bot: return await message.answer("❌ Cannot do that with yourself or a bot!")
-    if rel := await _existing_rel(u.id, t.id):
-        return await message.answer(f"❌ You and {t.full_name} are already **{rel}**! No duplicates needed.", parse_mode=None)
-
-    _, _, prompt = REL_MAP[cmd]
-    btn = InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text="✅ Accept", callback_data=f"fam_acc_{cmd}_{t.id}_{u.id}"),
-        InlineKeyboardButton(text="❌ Decline", callback_data=f"fam_rej_{cmd}_{t.id}_{u.id}")
-    ]])
-    await message.answer(prompt.format(u=u.full_name, t=t.full_name), reply_markup=btn, parse_mode=None)
+    if not message.reply_to_message or not message.reply_to_message.from_user: return await message.answer("Reply to someone!")
+    cmd = message.text.split()[0].lstrip("/!").lower(); u, t = message.from_user, message.reply_to_message.from_user
+    if t.id == u.id or t.is_bot: return await message.answer("❌ Invalid target!")
+    if rel := await _existing_rel(u.id, t.id): return await message.answer(f"❌ Already **{rel}**!", parse_mode=None)
+    btn = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="✅ Accept", callback_data=f"fam_acc_{cmd}_{t.id}_{u.id}"), InlineKeyboardButton(text="❌ Decline", callback_data=f"fam_rej_{cmd}_{t.id}_{u.id}")]])
+    await message.answer(REL_MAP[cmd][2].format(u=u.full_name, t=t.full_name), reply_markup=btn, parse_mode=None)
 
 
 @router.callback_query(F.data.startswith("fam_"))
 async def family_cb(query: CallbackQuery):
-    _, act, cmd, tid, uid = query.data.split("_")
-    tid, uid = int(tid), int(uid)
+    _, act, cmd, tid, uid = query.data.split("_"); tid, uid = int(tid), int(uid)
     if query.from_user.id != tid: return await query.answer("❌ Not for you!", show_alert=True)
-    if act == "rej":
-        await query.message.edit_text("❌ Family request declined.")
-        return await query.answer()
-    if rel := await _existing_rel(uid, tid):
-        await query.message.edit_text(f"❌ Already connected ({rel})!")
-        return await query.answer()
+    if act == "rej": await query.message.edit_text("❌ Declined."); return await query.answer()
+    if rel := await _existing_rel(uid, tid): await query.message.edit_text(f"❌ Already {rel}!"); return await query.answer()
     r1, r2, _ = REL_MAP[cmd]
-    await add_relation(uid, tid, r1)
-    await add_relation(tid, uid, r2)
-    await query.message.edit_text(f"🏡 **Family Updated!** {query.from_user.full_name} accepted `{cmd}`! 🌸", parse_mode=None)
+    await add_relation(uid, tid, r1); await add_relation(tid, uid, r2)
+    await query.message.edit_text(f"🏡 {query.from_user.full_name} accepted `{cmd}`! 🌸", parse_mode=None)
     await query.answer("Accepted!")
 
 
 @router.message(Command("disown", "runaway", "familyinfo", prefix="/!"))
 async def family_manage_cmds(message: Message):
     cmd = message.text.split()[0].lstrip("/!").lower()
-    if cmd == "runaway":
-        await runaway_family(message.from_user.id)
-        return await message.answer("🏃💨 You packed your bags and ran away from your family!")
+    if cmd == "runaway": await runaway_family(message.from_user.id); return await message.answer("🏃💨 Ran away from family!")
     if cmd == "disown":
-        if not message.reply_to_message or not message.reply_to_message.from_user:
-            return await message.answer("Reply to a family member to disown them!")
+        if not message.reply_to_message: return await message.answer("Reply to a family member!")
         t = message.reply_to_message.from_user
-        if not await _existing_rel(message.from_user.id, t.id):
-            return await message.answer(f"❌ {t.full_name} is not in your family!", parse_mode=None)
-        await remove_relation(message.from_user.id, t.id)
-        return await message.answer(f"❌ Disowned {t.full_name}!", parse_mode=None)
+        if not await _existing_rel(message.from_user.id, t.id): return await message.answer("❌ Not in your family!")
+        await remove_relation(message.from_user.id, t.id); return await message.answer(f"❌ Disowned {t.full_name}!", parse_mode=None)
     fam, pid = await get_family(message.from_user.id), await get_partner(message.from_user.id)
     if not fam and not pid: return await message.answer("🏡 Your family is empty!")
-    lines = [f"🏡 **{message.from_user.full_name}'s Family Info**\n"]
-    if pid: lines.append(f"• 💍 Spouse: `{pid}`")
-    for f in fam: lines.append(f"• {f['relation_type']}: `{f['relative_id']}`")
+    lines = [f"🏡 **{message.from_user.full_name}'s Family**\n"] + ([f"• 💍 Spouse: `{pid}`"] if pid else []) + [f"• {f['relation_type']}: `{f['relative_id']}`" for f in fam]
     await message.answer("\n".join(lines), parse_mode=None)
 
 
@@ -220,7 +196,6 @@ async def family_tree_cmd(message: Message):
     u = message.from_user
     await message.bot.send_chat_action(message.chat.id, "upload_photo")
     pid, fam = await get_partner(u.id), await get_family(u.id)
-    u_pfp = await _get_pfp(message.bot, u.id)
     sp_name, sp_pfp = None, None
     if pid:
         try: sp_name = (await message.bot.get_chat(pid)).first_name or str(pid)
@@ -232,58 +207,239 @@ async def family_tree_cmd(message: Message):
         try: rname = (await message.bot.get_chat(rid)).first_name or str(rid)
         except Exception: rname = str(rid)
         members.append((rname, f["relation_type"], await _get_pfp(message.bot, rid)))
-    img = generate_family_tree(u.first_name, u_pfp, sp_name, sp_pfp, members)
-    await message.answer_photo(BufferedInputFile(img.getvalue(), filename="tree.jpg"), caption=f"🌳 {u.full_name}'s Nakama Family Tree", parse_mode=None)
+    img = generate_family_tree(u.first_name, await _get_pfp(message.bot, u.id), sp_name, sp_pfp, members)
+    await message.answer_photo(BufferedInputFile(img.getvalue(), filename="tree.jpg"), caption=f"🌳 {u.full_name}'s Family Tree", parse_mode=None)
 
 
-# --- 3. ORIGINAL RUKA PAID GACHA (50 💎) ---
+# --- 3. ORIGINAL RUKA GACHA (1x / 10x Buttons + Weighted Rarity + Full HD Art) ---
 async def _pull_hd_art(tag: str, is_waifu: bool) -> str | None:
-    sb = await _fetch_json(f"https://safebooru.org/index.php?page=dapi&s=post&q=index&json=1&limit=25&tags={tag}+solo")
-    if isinstance(sb, list) and sb and sb[0].get("file_url"):
-        return random.choice(sb).get("file_url")
+    # Safebooru sorted by highest score for top-tier gorgeous art!
+    sb = await _fetch_json(f"https://safebooru.org/index.php?page=dapi&s=post&q=index&json=1&limit=30&tags={tag}+solo+sort:score:desc")
+    if isinstance(sb, list) and sb:
+        valid = [p.get("file_url") for p in sb if p.get("file_url") and not p["file_url"].endswith((".mp4", ".webm"))]
+        if valid: return random.choice(valid[:15])
     nb = await _fetch_json(f"https://nekos.best/api/v2/{'waifu' if is_waifu else 'husbando'}")
     return nb["results"][0].get("url") if nb and nb.get("results") else None
 
 
+def _roll_rarity(has_clover: bool) -> tuple[str, str, int]:
+    weights = [r[2] for r in RARITIES]
+    if has_clover:
+        weights = [40, 30, 18, 9, 3]
+    name, emoji, _, (pmin, pmax) = random.choices(RARITIES, weights=weights, k=1)[0]
+    return name, emoji, random.randint(pmin, pmax)
+
+
 @router.message(Command("gacha", "waifugacha", prefix="/!"))
-async def gacha_cmd(message: Message):
-    uid, cost = message.from_user.id, 50
-    if (await get_user_stats(uid))["coins"] < cost:
-        return await message.answer("❌ A Gacha spin costs **50 💎**! Claim `/daily` or play games!")
-    await message.bot.send_chat_action(message.chat.id, "upload_photo")
-    is_w = random.random() < 0.65
-    name, tag, anime = random.choice(WAIFU_POOL if is_w else HUSBANDO_POOL)
-    url = await _pull_hd_art(tag, is_w)
-    if not url: return await message.answer("❌ Gacha jammed! Coins not spent.")
+async def gacha_menu_cmd(message: Message):
+    s = await get_user_stats(message.from_user.id)
+    btns = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🎲 1x Spin (50 💎)", callback_data=f"gspin_1_{message.from_user.id}"),
+         InlineKeyboardButton(text="⚡ 10x Spin (450 💎)", callback_data=f"gspin_10_{message.from_user.id}")],
+        [InlineKeyboardButton(text="🌸 12h Exclusive Shop", callback_data=f"wshop_open_{message.from_user.id}")],
+    ])
+    await message.answer(
+        f"🌸 **Ruka's Royal Gacha**\n\n"
+        f"💰 Your Wallet: **`{s['coins']} 💎`**\n\n"
+        f"**Drop Rates:**\n"
+        f"⚪ Common: `50%` | 🔵 Rare: `28%`\n"
+        f"🟣 Epic: `14%` | 🔴 Mythical: `6%` | 🟡 Legendary: `2%`\n\n"
+        f"Choose your spin below:",
+        reply_markup=btns
+    )
+
+
+@router.callback_query(F.data.startswith("gspin_"))
+async def gacha_spin_cb(query: CallbackQuery):
+    _, count_s, owner_id = query.data.split("_")
+    count, uid = int(count_s), int(owner_id)
+    if query.from_user.id != uid:
+        return await query.answer("❌ Use /gacha for your own spin menu!", show_alert=True)
+
+    cost = 50 if count == 1 else 450
+    s = await get_user_stats(uid)
+    if s["coins"] < cost:
+        return await query.answer(f"❌ Need {cost} 💎! You have {s['coins']} 💎.", show_alert=True)
+
+    await query.answer("🎲 Spinning...")
     await update_user_stats(uid, coins=-cost)
-    roll = random.randint(1, 100) + (15 if (await get_inventory(uid)).get("clover", 0) > 0 else 0)
-    tier = "Heartbeat SSR" if roll >= 90 else ("Idol SR" if roll >= 65 else ("Doki-Doki R" if roll >= 35 else "Sweet"))
-    power = random.randint(4000, 9999) if "SSR" in tier else random.randint(1000, 4500)
-    ctype = "Waifu" if is_w else "Husbando"
-    cid = await add_gacha_card(uid, name, ctype, anime, tier, power, url)
-    img = generate_4k_anime_card(f"#{cid} {name}", f"{power} PWR", f"{ctype} • {anime}", tier, await _fetch_bytes(url))
-    await message.answer_photo(BufferedInputFile(img.getvalue(), filename="gacha.jpg"),
-                               caption=f"🎰 Ruka Gacha (-50 💎)\n🆔 #{cid} | {name} ({ctype})\n📺 {anime}\n✨ {tier} | ⚡ {power} PWR", parse_mode=None)
+    has_clover = (await get_inventory(uid)).get("clover", 0) > 0
+
+    pulls = []
+    for _ in range(count):
+        is_w = random.random() < 0.72
+        name, tag, anime = random.choice(WAIFU_POOL if is_w else HUSBANDO_POOL)
+        rarity, emoji, power = _roll_rarity(has_clover)
+        ctype = "Waifu" if is_w else "Husbando"
+        pulls.append((name, tag, anime, rarity, emoji, power, ctype))
+
+    # Pick the rarest/highest-power pull to showcase with full HD image
+    best = max(pulls, key=lambda x: x[5])
+    best_url = await _pull_hd_art(best[1], best[6] == "Waifu")
+
+    saved = []
+    for name, tag, anime, rarity, emoji, power, ctype in pulls:
+        url = best_url if (name == best[0] and best_url) else (await _pull_hd_art(tag, ctype == "Waifu") or best_url or "")
+        cid = await add_gacha_card(uid, name, ctype, anime, f"{emoji} {rarity}", power, url)
+        saved.append((cid, name, anime, rarity, emoji, power, ctype, url))
+
+    if count == 1:
+        cid, name, anime, rarity, emoji, power, ctype, url = saved[0]
+        cap = (
+            f"✨ {query.from_user.full_name} pulled a {ctype}!\n\n"
+            f"🆔 #{cid}: {name}\n📺 {anime}\n(RARITY: {emoji} {rarity.upper()} | ⚡ {power})"
+        )
+        if url:
+            await query.message.answer_photo(url, caption=cap, parse_mode=None)
+        else:
+            await query.message.answer(cap, parse_mode=None)
+    else:
+        summary = [f"⚡ 10x Spin Results (-450 💎) for {query.from_user.full_name}:\n"]
+        for cid, name, anime, rarity, emoji, power, ctype, _ in saved:
+            summary.append(f"• #{cid} {emoji} {name} ({anime}) — ⚡{power}")
+        summary.append(f"\n🌟 Best Pull: {best[4]} {best[0]} ({best[3]})")
+        cap = "\n".join(summary)
+        if best_url:
+            await query.message.answer_photo(best_url, caption=cap[:1000], parse_mode=None)
+        else:
+            await query.message.answer(cap, parse_mode=None)
 
 
-@router.message(Command("collection", "view", prefix="/!"))
-async def collection_cmds(message: Message):
-    cmd = message.text.split()[0].lstrip("/!").lower()
+# --- 4. 12-HOUR ROTATING EXCLUSIVE WAIFU SHOP (/waifushop) ---
+def _get_12h_shop():
+    epoch = int(time.time() // 43200)
+    rem = 43200 - (int(time.time()) % 43200)
+    rng = random.Random(epoch)
+    picks = rng.sample(WAIFU_POOL + HUSBANDO_POOL, 3)
+    items = []
+    for idx, (name, tag, anime) in enumerate(picks):
+        is_leg = idx == 0
+        rarity = "🟡 Legendary" if is_leg else "🔴 Mythical"
+        price = rng.randint(7500, 12000) if is_leg else rng.randint(3500, 6000)
+        power = rng.randint(8800, 9999) if is_leg else rng.randint(6500, 8400)
+        ctype = "Waifu" if (name, tag, anime) in WAIFU_POOL else "Husbando"
+        items.append({"idx": idx, "name": name, "tag": tag, "anime": anime, "rarity": rarity, "price": price, "power": power, "ctype": ctype})
+    return items, rem
+
+
+@router.message(Command("waifushop", prefix="/!"))
+@router.callback_query(F.data.startswith("wshop_open_"))
+async def waifu_shop_cmd(event: Message | CallbackQuery):
+    uid = event.from_user.id
+    items, rem = _get_12h_shop()
+    h, m = divmod(rem // 60, 60)
+    s = await get_user_stats(uid)
+
+    lines = [f"🌸 **Exclusive 12h Waifu Shop**\n⏳ Resets in: `{h}h {m}m` | 💰 Wallet: `{s['coins']} 💎`\n"]
+    btns = []
+    for it in items:
+        lines.append(f"• {it['rarity']} **{it['name']}** (*{it['anime']}*)\n  ↳ ⚡ `{it['power']} PWR` | 💎 `{it['price']} Coins`")
+        btns.append([InlineKeyboardButton(text=f"Buy {it['name']} ({it['price']} 💎)", callback_data=f"wbuy_{it['idx']}_{uid}")])
+
+    markup = InlineKeyboardMarkup(inline_keyboard=btns)
+    if isinstance(event, CallbackQuery):
+        await event.message.answer("\n".join(lines), reply_markup=markup)
+        await event.answer()
+    else:
+        await event.answer("\n".join(lines), reply_markup=markup)
+
+
+@router.callback_query(F.data.startswith("wbuy_"))
+async def waifu_shop_buy(query: CallbackQuery):
+    _, idx_s, owner_id = query.data.split("_")
+    idx, uid = int(idx_s), int(owner_id)
+    if query.from_user.id != uid:
+        return await query.answer("❌ Open your own /waifushop!", show_alert=True)
+    items, _ = _get_12h_shop()
+    it = items[idx]
+    s = await get_user_stats(uid)
+    if s["coins"] < it["price"]:
+        return await query.answer(f"❌ Need {it['price']} 💎!", show_alert=True)
+
+    await query.answer("✨ Purchasing...")
+    await update_user_stats(uid, coins=-it["price"])
+    url = await _pull_hd_art(it["tag"], it["ctype"] == "Waifu") or ""
+    cid = await add_gacha_card(uid, it["name"], it["ctype"], it["anime"], it["rarity"], it["power"], url)
+    cap = f"🛍️ Purchased Exclusive Card!\n\n🆔 #{cid}: {it['name']} ({it['ctype']})\n📺 {it['anime']}\n(RARITY: {it['rarity']} | ⚡ {it['power']})"
+    if url:
+        await query.message.answer_photo(url, caption=cap, parse_mode=None)
+    else:
+        await query.message.answer(cap, parse_mode=None)
+
+
+# --- 5. ORGANIZED /collection (With Filters) & WORKING /view ---
+def _format_collection(cards: list[dict], name: str, flt: str = "all") -> tuple[str, InlineKeyboardMarkup]:
+    if flt == "waifu": filtered = [c for c in cards if c["char_type"] == "Waifu"]
+    elif flt == "husbando": filtered = [c for c in cards if c["char_type"] == "Husbando"]
+    elif flt == "high": filtered = [c for c in cards if "Mythical" in c["rarity"] or "Legendary" in c["rarity"] or "Epic" in c["rarity"]]
+    else: filtered = cards
+
+    # Group by anime series
+    by_series: dict[str, list[dict]] = {}
+    for c in filtered[:25]:
+        by_series.setdefault(c["anime"], []).append(c)
+
+    lines = [f"🃏 {name}'s Collection ({len(filtered)} shown / {len(cards)} total)\n"]
+    for series, clist in by_series.items():
+        lines.append(f"↪ {series}")
+        for c in clist:
+            lines.append(f"  | #{c['card_id']} | {c['rarity']} {c['card_name']} (⚡{c['power']})")
+    if not filtered:
+        lines.append("No cards match this filter yet!")
+    lines.append("\nUse /view <id or name> to inspect any card!")
+
+    btns = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📋 All", callback_data="col_all"),
+         InlineKeyboardButton(text="💖 Waifus", callback_data="col_waifu")],
+        [InlineKeyboardButton(text="💙 Husbandos", callback_data="col_husbando"),
+         InlineKeyboardButton(text="🔥 High Rarity", callback_data="col_high")],
+    ])
+    return "\n".join(lines), btns
+
+
+@router.message(Command("collection", prefix="/!"))
+async def collection_cmd(message: Message):
     cards = await get_user_cards(message.from_user.id)
-    if cmd == "collection":
-        if not cards: return await message.answer("📭 Empty! Spin `/gacha` for `50 💎`!")
-        lines = [f"🃏 {message.from_user.full_name}'s Collection ({len(cards)})\n"] + [f"• #{c['card_id']} {c['card_name']} [{c['char_type']}] — {c['rarity']}" for c in cards[:15]]
-        return await message.answer("\n".join(lines), parse_mode=None)
+    if not cards:
+        return await message.answer("📭 Your collection is empty! Use `/gacha` to spin!")
+    txt, btns = _format_collection(cards, message.from_user.full_name, "all")
+    await message.answer(txt, reply_markup=btns, parse_mode=None)
+
+
+@router.callback_query(F.data.startswith("col_"))
+async def collection_cb(query: CallbackQuery):
+    flt = query.data.split("_")[1]
+    cards = await get_user_cards(query.from_user.id)
+    txt, btns = _format_collection(cards, query.from_user.full_name, flt)
+    try:
+        await query.message.edit_text(txt, reply_markup=btns, parse_mode=None)
+    except Exception:
+        pass
+    await query.answer()
+
+
+@router.message(Command("view", prefix="/!"))
+async def view_card_cmd(message: Message):
     p = message.text.split(None, 1)
-    if len(p) < 2: return await message.answer("Usage: `/view <id or name>`")
-    q = p[1].lstrip("#").lower()
+    if len(p) < 2:
+        return await message.answer("Usage: `/view <id or name>` (e.g. `/view 1` or `/view Emilia`)")
+    q = p[1].lstrip("#").strip().lower()
+    cards = await get_user_cards(message.from_user.id)
     f = next((c for c in cards if str(c["card_id"]) == q or q in c["card_name"].lower()), None)
-    if not f: return await message.answer("❌ Card not found!")
-    img = generate_4k_anime_card(f"#{f['card_id']} {f['card_name']}", f"{f['power']} PWR", f"{f['char_type']} • {f['anime']}", f["rarity"], await _fetch_bytes(f["image_url"]))
-    await message.answer_photo(BufferedInputFile(img.getvalue(), filename="view.jpg"), caption=f"🃏 #{f['card_id']} {f['card_name']} | {f['rarity']} | ⚡ {f['power']}", parse_mode=None)
+    if not f:
+        return await message.answer("❌ Card not found in your collection!")
+    cap = (
+        f"🃏 Card #{f['card_id']}: {f['card_name']} ({f['char_type']})\n"
+        f"📺 {f['anime']}\n"
+        f"(RARITY: {f['rarity']} | ⚡ {f['power']} PWR)"
+    )
+    if f.get("image_url"):
+        await message.answer_photo(f["image_url"], caption=cap, parse_mode=None)
+    else:
+        await message.answer(cap, parse_mode=None)
 
 
-# --- 4. IDENTITY & LOVE ---
+# --- 6. IDENTITY & LOVE ---
 @router.message(Command("gender", "bio", "mybio", "lovecalc", prefix="/!"))
 async def profile_cmds(message: Message):
     cmd = message.text.split()[0].lstrip("/!").lower()
