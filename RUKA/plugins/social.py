@@ -8,10 +8,14 @@ from RUKA.utils.db import (
     runaway_family, get_family, set_profile, get_profile,
     add_gacha_card, get_user_cards, get_user_stats, update_user_stats, get_inventory
 )
-from RUKA.utils.image_gen import generate_family_tree
+from RUKA.utils.image_gen import generate_family_tree, generate_waifushop_banner
 
 router = Router()
 
+RUKA_PIC = "https://ganga--link--ghhzdp9sv8hk.code.run/i/s0s0y8txhk.jpg"
+RUKA_CACHE: bytes | None = None
+
+# Verified Danbooru/Safebooru tags -> 100% Matched Character & Image!
 WAIFU_POOL = [
     ("Ruka Sarashina", "ruka_sarashina", "Rent-a-Girlfriend"),
     ("Emilia", "emilia_(re:zero)", "Re:Zero"),
@@ -19,7 +23,7 @@ WAIFU_POOL = [
     ("Zero Two", "zero_two_(darling_in_the_franxx)", "Darling in the FranXX"),
     ("Makima", "makima_(chainsaw_man)", "Chainsaw Man"),
     ("Marin Kitagawa", "kitagawa_marin", "My Dress-Up Darling"),
-    ("Yor Forger", "yor_forger", "Spy x Family"),
+    ("Yor Forger", "yor_briar", "Spy x Family"),
     ("Raiden Shogun", "raiden_shogun", "Genshin Impact"),
     ("Hu Tao", "hu_tao_(genshin_impact)", "Genshin Impact"),
     ("Mitsuri Kanroji", "kanroji_mitsuri", "Demon Slayer"),
@@ -39,16 +43,28 @@ HUSBANDO_POOL = [
     ("Sung Jin-Woo", "sung_jin-woo", "Solo Leveling"),
 ]
 RARITIES = [
-    ("Common", "⚪", 50), ("Rare", "🔵", 28),
-    ("Epic", "🟣", 14), ("Mythical", "🔴", 6), ("Legendary", "🟡", 2),
+    ("Common", "⚪", 50, (1000, 2200)), ("Rare", "🔵", 28, (2300, 3800)),
+    ("Epic", "🟣", 14, (4000, 5800)), ("Mythical", "🔴", 6, (6200, 8200)), ("Legendary", "🟡", 2, (8500, 9999)),
 ]
 
 
 async def _fetch_json(url: str):
     try:
-        async with aiohttp.ClientSession() as s:
+        async with aiohttp.ClientSession(headers={"User-Agent": "RuKaBot/3.0"}) as s:
             async with s.get(url, timeout=10) as r:
                 if r.status == 200: return await r.json()
+    except Exception: pass
+    return None
+
+
+async def _ruka_bytes() -> BytesIO | None:
+    global RUKA_CACHE
+    if RUKA_CACHE: return BytesIO(RUKA_CACHE)
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.get(RUKA_PIC, timeout=10) as r:
+                if r.status == 200:
+                    RUKA_CACHE = await r.read(); return BytesIO(RUKA_CACHE)
     except Exception: pass
     return None
 
@@ -204,30 +220,25 @@ async def family_tree_cmd(message: Message):
     await message.answer_photo(BufferedInputFile(img.getvalue(), filename="tree.jpg"), caption=f"🌳 {u.full_name}'s Family Tree", parse_mode=None)
 
 
-# --- 3. ORIGINAL RUKA GACHA (No White Backgrounds + Score-Matched Rarity!) ---
-async def _pull_hd_art(tag: str, is_waifu: bool, rarity: str = "Common") -> str | None:
-    # Exclude white/simple backgrounds so only full, scenic, attractive art is pulled!
-    base_tags = f"{tag}+solo+-white_background+-simple_background+-transparent_background"
-    if rarity in ("Legendary", "Mythical"):
-        query_tags = f"{base_tags}+sort:score:desc"
-        limit = 12
-    else:
-        query_tags = f"{base_tags}"
-        limit = 35
-
-    sb = await _fetch_json(f"https://safebooru.org/index.php?page=dapi&s=post&q=index&json=1&limit={limit}&tags={query_tags}")
-    if isinstance(sb, list) and sb:
-        valid = [p.get("file_url") for p in sb if p.get("file_url") and not p["file_url"].endswith((".mp4", ".webm"))]
-        if valid:
-            return random.choice(valid[:8] if rarity in ("Legendary", "Mythical") else valid)
-    nb = await _fetch_json(f"https://nekos.best/api/v2/{'waifu' if is_waifu else 'husbando'}")
-    return nb["results"][0].get("url") if nb and nb.get("results") else None
+# --- 3. MATCHED WAIFU & HUSBANDO GACHA (Danbooru + Safebooru SFW) ---
+async def _pull_char_art(tag: str) -> str | None:
+    # 1. Danbooru SFW (cleanest, exact character match!)
+    db = await _fetch_json(f"https://danbooru.donmai.us/posts.json?tags={tag}+rating:general+solo&limit=20")
+    if isinstance(db, list):
+        urls = [p.get("large_file_url") or p.get("file_url") for p in db if (p.get("large_file_url") or p.get("file_url", "")).endswith((".jpg", ".png", ".jpeg"))]
+        if urls: return random.choice(urls)
+    # 2. Safebooru exact tag fallback
+    sb = await _fetch_json(f"https://safebooru.org/index.php?page=dapi&s=post&q=index&json=1&limit=20&tags={tag}+rating:general")
+    if isinstance(sb, list):
+        urls = [p.get("file_url") for p in sb if p.get("file_url", "").endswith((".jpg", ".png", ".jpeg"))]
+        if urls: return random.choice(urls)
+    return None
 
 
-def _roll_rarity(has_clover: bool) -> tuple[str, str]:
+def _roll_rarity(has_clover: bool) -> tuple[str, str, int]:
     weights = [40, 30, 18, 9, 3] if has_clover else [r[2] for r in RARITIES]
-    name, emoji, _ = random.choices(RARITIES, weights=weights, k=1)[0]
-    return name, emoji
+    name, emoji, _, (pmin, pmax) = random.choices(RARITIES, weights=weights, k=1)[0]
+    return name, emoji, random.randint(pmin, pmax)
 
 
 @router.message(Command("gacha", "waifugacha", prefix="/!"))
@@ -250,40 +261,37 @@ async def gacha_spin_cb(query: CallbackQuery):
     _, count_s, owner_id = query.data.split("_"); count, uid = int(count_s), int(owner_id)
     if query.from_user.id != uid: return await query.answer("❌ Use /gacha for your own menu!", show_alert=True)
     cost = 50 if count == 1 else 450
-    if (await get_user_stats(uid))["coins"] < cost:
-        return await query.answer(f"❌ Need {cost} 💎!", show_alert=True)
+    if (await get_user_stats(uid))["coins"] < cost: return await query.answer(f"❌ Need {cost} 💎!", show_alert=True)
 
     await query.answer("🎲 Spinning...")
     await update_user_stats(uid, coins=-cost)
     has_clover = (await get_inventory(uid)).get("clover", 0) > 0
-    rank_order = {"Common": 1, "Rare": 2, "Epic": 3, "Mythical": 4, "Legendary": 5}
-
     pulls = []
     for _ in range(count):
         is_w = random.random() < 0.72
         name, tag, anime = random.choice(WAIFU_POOL if is_w else HUSBANDO_POOL)
-        rarity, emoji = _roll_rarity(has_clover)
-        pulls.append((name, tag, anime, rarity, emoji, "Waifu" if is_w else "Husbando"))
+        rarity, emoji, power = _roll_rarity(has_clover)
+        pulls.append((name, tag, anime, rarity, emoji, power, "Waifu" if is_w else "Husbando"))
 
-    best = max(pulls, key=lambda x: rank_order[x[3]])
-    best_url = await _pull_hd_art(best[1], best[5] == "Waifu", best[3])
+    best = max(pulls, key=lambda x: x[5])
+    best_url = await _pull_char_art(best[1])
     saved = []
-    for name, tag, anime, rarity, emoji, ctype in pulls:
-        url = best_url if (name == best[0] and best_url) else (await _pull_hd_art(tag, ctype == "Waifu", rarity) or best_url or "")
-        cid = await add_gacha_card(uid, name, ctype, anime, f"{emoji} {rarity}", rank_order[rarity], url)
-        saved.append((cid, name, anime, rarity, emoji, ctype, url))
+    for name, tag, anime, rarity, emoji, power, ctype in pulls:
+        url = best_url if (name == best[0] and best_url) else (await _pull_char_art(tag) or "")
+        cid = await add_gacha_card(uid, name, ctype, anime, f"{emoji} {rarity}", power, url)
+        saved.append((cid, name, anime, rarity, emoji, power, ctype, url))
 
     if count == 1:
-        cid, name, anime, rarity, emoji, ctype, url = saved[0]
-        cap = f"🌸 Look who joined {query.from_user.full_name}'s Collection!\n\n🆔 #{cid} • {name} ({ctype})\n✨ {anime}\n(RARITY: {emoji} {rarity.upper()})"
+        cid, name, anime, rarity, emoji, power, ctype, url = saved[0]
+        cap = f"✨ {query.from_user.full_name} pulled a {ctype}!\n\n🆔 #{cid}: {name}\n📺 {anime}\n(RARITY: {emoji} {rarity.upper()} | ⚡ {power})"
         await (query.message.answer_photo(url, caption=cap, parse_mode=None) if url else query.message.answer(cap, parse_mode=None))
     else:
-        summary = [f"⚡ 10x Spin (-450 💎) for {query.from_user.full_name}:\n"] + [f"• #{c[0]} {c[4]} {c[1]} ({c[2]})" for c in saved] + [f"\n🌟 Best Pull: {best[4]} {best[0]} ({best[3]})"]
+        summary = [f"⚡ 10x Spin (-450 💎) for {query.from_user.full_name}:\n"] + [f"• #{c[0]} {c[4]} {c[1]} ({c[2]}) — ⚡{c[5]}" for c in saved] + [f"\n🌟 Best: {best[4]} {best[0]} ({best[3]})"]
         cap = "\n".join(summary)[:1000]
         await (query.message.answer_photo(best_url, caption=cap, parse_mode=None) if best_url else query.message.answer(cap, parse_mode=None))
 
 
-# --- 4. 12-HOUR EXCLUSIVE WAIFU SHOP ---
+# --- 4. 12-HOUR EXCLUSIVE WAIFU SHOP (With Custom Pillow Shop Banner!) ---
 def _get_12h_shop():
     epoch = int(time.time() // 43200)
     rem = 43200 - (int(time.time()) % 43200)
@@ -295,8 +303,8 @@ def _get_12h_shop():
         items.append({
             "idx": idx, "name": name, "tag": tag, "anime": anime,
             "rarity": "🟡 Legendary" if is_leg else "🔴 Mythical",
-            "rname": "Legendary" if is_leg else "Mythical",
             "price": rng.randint(7500, 12000) if is_leg else rng.randint(3500, 6000),
+            "power": rng.randint(8800, 9999) if is_leg else rng.randint(6500, 8400),
             "ctype": "Waifu" if (name, tag, anime) in WAIFU_POOL else "Husbando",
         })
     return items, rem
@@ -306,22 +314,17 @@ def _get_12h_shop():
 @router.callback_query(F.data.startswith("wshop_open_"))
 async def waifu_shop_cmd(event: Message | CallbackQuery):
     uid = event.from_user.id
-    items, rem = _get_12h_shop(); h, m = divmod(rem // 60, 60)
+    items, rem = _get_12h_shop()
+    h, m = divmod(rem // 60, 60)
     s = await get_user_stats(uid)
-
-    lines = [f"🌸 Exclusive 12h Waifu Shop\n⏳ Resets in: {h}h {m}m | 💰 Wallet: {s['coins']} 💎\n"]
-    btns = []
-    for it in items:
-        lines.append(f"• {it['rarity']} {it['name']} ({it['anime']}) — 💎 {it['price']} Coins")
-        btns.append([InlineKeyboardButton(text=f"Buy {it['name']} ({it['price']} 💎)", callback_data=f"wbuy_{it['idx']}_{uid}")])
-
-    featured_url = await _pull_hd_art(items[0]["tag"], items[0]["ctype"] == "Waifu", "Legendary")
-    markup = InlineKeyboardMarkup(inline_keyboard=btns)
+    img = generate_waifushop_banner(s["coins"], items, f"{h}h {m}m", await _ruka_bytes())
+    btns = [[InlineKeyboardButton(text=f"Buy {it['name']} ({it['price']} 💎)", callback_data=f"wbuy_{it['idx']}_{uid}")] for it in items]
     target_msg = event.message if isinstance(event, CallbackQuery) else event
-    if featured_url:
-        await target_msg.answer_photo(featured_url, caption="\n".join(lines), reply_markup=markup, parse_mode=None)
-    else:
-        await target_msg.answer("\n".join(lines), reply_markup=markup, parse_mode=None)
+    await target_msg.answer_photo(
+        BufferedInputFile(img.getvalue(), filename="waifushop.jpg"),
+        caption=f"🌸 12h Exclusive Waifu Shop | Resets in {h}h {m}m",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=btns), parse_mode=None
+    )
     if isinstance(event, CallbackQuery): await event.answer()
 
 
@@ -331,35 +334,42 @@ async def waifu_shop_buy(query: CallbackQuery):
     if query.from_user.id != uid: return await query.answer("❌ Open your own /waifushop!", show_alert=True)
     items, _ = _get_12h_shop(); it = items[idx]
     if (await get_user_stats(uid))["coins"] < it["price"]: return await query.answer(f"❌ Need {it['price']} 💎!", show_alert=True)
-
     await query.answer("✨ Purchasing...")
     await update_user_stats(uid, coins=-it["price"])
-    url = await _pull_hd_art(it["tag"], it["ctype"] == "Waifu", it["rname"]) or ""
-    cid = await add_gacha_card(uid, it["name"], it["ctype"], it["anime"], it["rarity"], 5, url)
-    cap = f"🛍️ Purchased Exclusive Card!\n\n🆔 #{cid} • {it['name']} ({it['ctype']})\n✨ {it['anime']}\n(RARITY: {it['rarity']})"
+    url = await _pull_char_art(it["tag"]) or ""
+    cid = await add_gacha_card(uid, it["name"], it["ctype"], it["anime"], it["rarity"], it["power"], url)
+    cap = f"🛍️ Purchased Exclusive Card!\n\n🆔 #{cid}: {it['name']} ({it['ctype']})\n📺 {it['anime']}\n(RARITY: {it['rarity']} | ⚡ {it['power']})"
     await (query.message.answer_photo(url, caption=cap, parse_mode=None) if url else query.message.answer(cap, parse_mode=None))
 
 
-# --- 5. /collection & /view ---
-def _format_collection(cards: list[dict], name: str, flt: str = "all") -> tuple[str, InlineKeyboardMarkup]:
-    if flt == "waifu": filtered = [c for c in cards if c["char_type"] == "Waifu"]
-    elif flt == "husbando": filtered = [c for c in cards if c["char_type"] == "Husbando"]
-    elif flt == "high": filtered = [c for c in cards if any(x in c["rarity"] for x in ("Mythical", "Legendary", "Epic"))]
-    else: filtered = cards
+# --- 5. SORTABLE /collection & /view ---
+def _format_collection(cards: list[dict], name: str, mode: str = "series") -> tuple[str, InlineKeyboardMarkup]:
+    if mode == "waifu": filtered = [c for c in cards if c["char_type"] == "Waifu"]
+    elif mode == "husbando": filtered = [c for c in cards if c["char_type"] == "Husbando"]
+    elif mode == "rarity":
+        order = {"Legendary": 5, "Mythical": 4, "Epic": 3, "Rare": 2, "Common": 1}
+        filtered = sorted(cards, key=lambda c: next((v for k, v in order.items() if k in c["rarity"]), 0), reverse=True)
+    elif mode == "power":
+        filtered = sorted(cards, key=lambda c: c["power"], reverse=True)
+    else:
+        filtered = sorted(cards, key=lambda c: c["anime"])
 
-    by_series: dict[str, list[dict]] = {}
-    for c in filtered[:25]: by_series.setdefault(c["anime"], []).append(c)
-
-    lines = [f"🃏 {name}'s Collection ({len(filtered)} shown / {len(cards)} total)\n"]
-    for series, clist in by_series.items():
-        lines.append(f"↪ {series}")
-        for c in clist: lines.append(f"  | #{c['card_id']} | {c['rarity']} {c['card_name']}")
+    lines = [f"🃏 {name}'s Collection ({len(filtered)} Cards | Sort: {mode.upper()})\n"]
+    if mode == "series":
+        by_s: dict[str, list[dict]] = {}
+        for c in filtered[:25]: by_s.setdefault(c["anime"], []).append(c)
+        for s_name, clist in by_s.items():
+            lines.append(f"↪ {s_name}")
+            for c in clist: lines.append(f"  | #{c['card_id']} | {c['rarity']} {c['card_name']} (⚡{c['power']})")
+    else:
+        for c in filtered[:25]:
+            lines.append(f"• #{c['card_id']} | {c['rarity']} {c['card_name']} ({c['anime']}) — ⚡{c['power']}")
     if not filtered: lines.append("No cards match this filter yet!")
     lines.append("\nUse /view <id or name> to inspect any card!")
 
     btns = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📋 All", callback_data="col_all"), InlineKeyboardButton(text="💖 Waifus", callback_data="col_waifu")],
-        [InlineKeyboardButton(text="💙 Husbandos", callback_data="col_husbando"), InlineKeyboardButton(text="🔥 High Rarity", callback_data="col_high")],
+        [InlineKeyboardButton(text="📚 By Series", callback_data="col_series"), InlineKeyboardButton(text="🌟 By Rarity", callback_data="col_rarity")],
+        [InlineKeyboardButton(text="⚡ By Power", callback_data="col_power"), InlineKeyboardButton(text="💖 Waifus", callback_data="col_waifu"), InlineKeyboardButton(text="💙 Husbandos", callback_data="col_husbando")],
     ])
     return "\n".join(lines), btns
 
@@ -368,7 +378,7 @@ def _format_collection(cards: list[dict], name: str, flt: str = "all") -> tuple[
 async def collection_cmd(message: Message):
     cards = await get_user_cards(message.from_user.id)
     if not cards: return await message.answer("📭 Empty! Spin `/gacha`!")
-    txt, btns = _format_collection(cards, message.from_user.full_name, "all")
+    txt, btns = _format_collection(cards, message.from_user.full_name, "series")
     await message.answer(txt, reply_markup=btns, parse_mode=None)
 
 
@@ -387,7 +397,7 @@ async def view_card_cmd(message: Message):
     q = p[1].lstrip("#").strip().lower()
     f = next((c for c in await get_user_cards(message.from_user.id) if str(c["card_id"]) == q or q in c["card_name"].lower()), None)
     if not f: return await message.answer("❌ Card not found!")
-    cap = f"🃏 #{f['card_id']} • {f['card_name']} ({f['char_type']})\n✨ {f['anime']}\n(RARITY: {f['rarity']})"
+    cap = f"🃏 Card #{f['card_id']}: {f['card_name']} ({f['char_type']})\n📺 {f['anime']}\n(RARITY: {f['rarity']} | ⚡ {f['power']} PWR)"
     await (message.answer_photo(f["image_url"], caption=cap, parse_mode=None) if f.get("image_url") else message.answer(cap, parse_mode=None))
 
 
